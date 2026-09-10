@@ -114,7 +114,8 @@ for opt in "${!SSH_OPTS[@]}"; do
     fi
 done
 
-# Ограничение источника подключений: управление разрешено только с АРМ администратора.
+# Ограничение источника подключений обеспечивается межсетевым экраном (раздел ниже):
+# блок Match задаёт условия сеанса с АРМ, но сам по себе не запрещает другие адреса.
 if apply && ! grep -q 'KSC deployment: allow from admin workstation' "$SSHD"; then
     cat >> "$SSHD" <<EOF
 
@@ -123,7 +124,10 @@ if apply && ! grep -q 'KSC deployment: allow from admin workstation' "$SSHD"; th
 Match Address ${SSH_ALLOW_FROM}
     PermitTTY yes
 EOF
-    log "  добавлено ограничение источника подключений: ${SSH_ALLOW_FROM}" OK
+    log "  добавлены условия сеанса для ${SSH_ALLOW_FROM}" OK
+    log '  Запрет подключений с прочих адресов обеспечивает ufw; при обходе межсетевого' WARN
+    log '  экрана (иной интерфейс, туннель) вход с ключом останется возможен. При наличии' WARN
+    log '  учтённого перечня администраторов добавьте AllowUsers или AllowGroups вручную.' WARN
 fi
 
 if apply; then
@@ -421,10 +425,13 @@ fi
 
 log '--- Планировщик заданий ---'
 if apply; then
-    for f in /etc/cron.deny /etc/at.deny; do rm -f "$f"; done
+    for f in /etc/cron.deny /etc/at.deny; do backup "$f"; rm -f "$f"; done
     for f in /etc/cron.allow /etc/at.allow; do
+        backup "$f"
         printf 'root\n' > "$f"; chmod 600 "$f"; chown root:root "$f"
     done
+    log '  прежние списки cron/at сохранены рядом с суффиксом .ksc-bak-'"${STAMP}" WARN
+    log '  Если задания выполняются от служебных учётных записей, верните их в /etc/cron.allow.' WARN
     chmod 600 /etc/crontab 2>/dev/null || true
     chmod 700 /etc/cron.d /etc/cron.daily /etc/cron.hourly /etc/cron.weekly /etc/cron.monthly 2>/dev/null || true
     log '  задания cron/at разрешены только суперпользователю' OK

@@ -19,6 +19,7 @@
 Set-StrictMode -Version Latest
 
 $script:RollbackDir = 'C:\ProgramData\KscDeployment\rollback'
+$script:SecPolBackup = $null
 $script:RollbackFile = Join-Path $script:RollbackDir ("rollback-{0}.json" -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
 $script:RollbackData = [System.Collections.Generic.List[object]]::new()
 
@@ -406,14 +407,26 @@ function Set-DefenderBaseline {
 # ============================================================================
 
 function Backup-LocalSecurityPolicy {
-    <# Выгрузка текущей локальной политики безопасности для последующего отката. #>
+    <#
+        Выгрузка локальной политики безопасности для последующего отката.
+
+        Выгрузка выполняется один раз за запуск: иначе вторая выгрузка
+        уже содержит изменения предыдущего шага и откат возвращает
+        узел не в исходное состояние.
+    #>
     [CmdletBinding()]
     param()
+    if ($script:SecPolBackup -and (Test-Path $script:SecPolBackup)) { return $script:SecPolBackup }
+    if ($WhatIfPreference) {
+        Write-KscLog '  Выгрузка локальной политики безопасности не выполняется: предварительный просмотр.'
+        return $null
+    }
     if (-not (Test-Path $script:RollbackDir)) { New-Item -ItemType Directory -Path $script:RollbackDir -Force | Out-Null }
-    $file = Join-Path $script:RollbackDir ("secpol-{0}.inf" -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
+    $file = Join-Path $script:RollbackDir ("secpol-{0}-{1}.inf" -f (Get-Date -Format 'yyyyMMdd-HHmmss'), [guid]::NewGuid().ToString('N').Substring(0, 8))
     secedit /export /cfg $file /quiet | Out-Null
     if (Test-Path $file) {
-        Write-KscLog "  Выгрузка локальной политики безопасности: $file"
+        $script:SecPolBackup = $file
+        Write-KscLog "  Выгрузка локальной политики безопасности до изменений: $file"
         Write-KscLog "  Откат: secedit /configure /db secedit.sdb /cfg `"$file`" /overwrite"
         return $file
     }
@@ -783,14 +796,15 @@ function Set-RemovableStorageHardening {
         '{53f56308-b6bf-11d0-94f2-00a0c91efb8b}' = 'Ленточные накопители'
         '{6ac27878-a6fa-4155-ba85-f98f491d4f33}' = 'Устройства WPD'
     }
+    # Значения записываются явно в обоих режимах: иначе переход
+    # с DenyAll на DenyWrite оставляет действующим запрет чтения и запуска.
+    $denyAll = [int]($Mode -eq 'DenyAll')
     foreach ($c in $classes.Keys) {
         Set-RegValue -Path "$base\$c" -Name 'Deny_Write' -Value 1 -Comment "($($classes[$c]): запись)"
-        if ($Mode -eq 'DenyAll') {
-            Set-RegValue -Path "$base\$c" -Name 'Deny_Read' -Value 1 -Comment "($($classes[$c]): чтение)"
-            Set-RegValue -Path "$base\$c" -Name 'Deny_Execute' -Value 1
-        }
+        Set-RegValue -Path "$base\$c" -Name 'Deny_Read' -Value $denyAll -Comment "($($classes[$c]): чтение)"
+        Set-RegValue -Path "$base\$c" -Name 'Deny_Execute' -Value $denyAll
     }
-    Set-RegValue -Path $base -Name 'Deny_All' -Value $(if ($Mode -eq 'DenyAll') { 1 } else { 0 })
+    Set-RegValue -Path $base -Name 'Deny_All' -Value $denyAll
     Write-KscLog '  Учтите: запрет чтения со съёмных носителей препятствует доставке дистрибутивов и обновлений' 'WARN'
     Write-KscLog '  в изолированном контуре. Предусмотрите порядок временного снятия запрета для учтённых носителей.' 'WARN'
 }
@@ -889,14 +903,20 @@ $extra
 </AppLockerPolicy>
 "@
 
-    if (-not (Test-Path $script:RollbackDir)) { New-Item -ItemType Directory -Path $script:RollbackDir -Force | Out-Null }
-    $before = Join-Path $script:RollbackDir ("applocker-before-{0}.xml" -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
-    Get-AppLockerPolicy -Local -Xml -ErrorAction SilentlyContinue | Set-Content $before -Encoding UTF8
+    if ($AllowedPaths.Count -gt 0) {
+        Write-KscLog '  ! Разрешённые расположения задаются путём и действуют для всех пользователей.' 'WARN'
+        Write-KscLog '    До включения блокировки убедитесь, что у обычных пользователей нет права записи' 'WARN'
+        Write-KscLog '    ни в эти каталоги, ни во вложенные: иначе правило обходится подменой файла.' 'WARN'
+        foreach ($path in $AllowedPaths) { Write-KscLog "    проверьте разрешения: icacls `"$path`"" 'WARN' }
+    }
 
     $policyFile = Join-Path $env:TEMP ("ksc-applocker-{0}.xml" -f [guid]::NewGuid())
     try {
         Set-Content -Path $policyFile -Value $xml -Encoding UTF8
         if ($PSCmdlet.ShouldProcess('Политика AppLocker', "Применить в режиме $mode")) {
+            if (-not (Test-Path $script:RollbackDir)) { New-Item -ItemType Directory -Path $script:RollbackDir -Force | Out-Null }
+            $before = Join-Path $script:RollbackDir ("applocker-before-{0}.xml" -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
+            Get-AppLockerPolicy -Local -Xml -ErrorAction SilentlyContinue | Set-Content $before -Encoding UTF8
             Set-AppLockerPolicy -XmlPolicy $policyFile -ErrorAction Stop
             Set-Service AppIDSvc -StartupType Automatic
             Start-Service AppIDSvc -ErrorAction SilentlyContinue
