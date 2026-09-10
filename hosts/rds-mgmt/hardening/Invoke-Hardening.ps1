@@ -1,45 +1,90 @@
 ﻿<#
 .SYNOPSIS
-    Харденинг АРМ администратора (терминальный сервер RDS, 10.20.30.15).
+    Харденинг АРМ администратора (RDS 10.20.30.15) — единственной точки управления KSC.
 
 .DESCRIPTION
-    АРМ администратора — привилегированный узел: с него выполняется управление
-    системой антивирусной защиты. Компрометация этого узла равнозначна
-    компрометации всей системы защиты, поэтому профиль строже базового:
+    Профиль строже, чем у остальных узлов: узел даёт доступ к управлению всей
+    системой защиты, поэтому его компрометация равнозначна компрометации KSC.
 
-      * запрет проброса буфера обмена, дисков, принтеров в сеансах RDP;
-      * обязательная блокировка сеанса при простое;
-      * запрет хранения учётных данных (Credential Delegation);
-      * ограничение состава локальных администраторов;
-      * запрет запуска неподписанных сценариев;
-      * усиленный аудит запуска процессов;
-      * контроль состава установленного ПО (вывод перечня для сверки).
+    Отличия от профиля рядового узла:
+
+      * кеширование доменных входов запрещено полностью;
+      * перенаправление в сеансах запрещено целиком (буфер обмена, диски,
+        принтеры, COM/LPT, PnP) — канал переноса данных из контура;
+      * делегирование учётных данных ограничено режимами Restricted Admin
+        и Remote Credential Guard: пароль администратора не попадает
+        на управляемый узел;
+      * съёмные носители запрещены полностью, а не только на запись;
+      * управление запуском программ включается для всех, кроме администраторов;
+      * PowerShell — только подписанные сценарии, с ведением стенограмм.
 
     Скрипт поддерживает -WhatIf.
 
+.PARAMETER Level
+    Strict (по умолчанию) либо Baseline.
+
+.PARAMETER IdleLockMinutes
+    Простой до разрыва сеанса и блокировки рабочего стола.
+
+.PARAMETER SkipCredentialGuard
+    Не включать защиту на основе виртуализации.
+
+.PARAMETER EnforceAppLocker
+    Режим блокировки вместо режима наблюдения.
+
 .EXAMPLE
     .\Invoke-Hardening.ps1 -WhatIf
-    .\Invoke-Hardening.ps1
+    .\Invoke-Hardening.ps1 -IdleLockMinutes 10
 #>
 [CmdletBinding(SupportsShouldProcess)]
-param([int]$IdleLockMinutes = 10)
+param(
+    [ValidateSet('Strict', 'Baseline')][string]$Level = 'Strict',
+    [int]$IdleLockMinutes = 15,
+    [switch]$SkipCredentialGuard,
+    [switch]$EnforceAppLocker
+)
 
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\..\..\..\common\config.ps1"
 Import-Module "$PSScriptRoot\..\..\..\common\WindowsBaseline.psm1" -Force
 Assert-Elevated
 
-Write-KscLog '=== Харденинг: АРМ администратора (RDS) ==='
+Write-KscLog "=== Харденинг: АРМ администратора (RDS), профиль $Level ==="
 
-# ---------------------------------------------------------------- Базовый профиль
+# ---------------------------------------------------------------- Общая часть
 
 Disable-LegacyProtocols
 Set-TlsHardening
 Set-AuthenticationHardening -CachedLogons 0     # кеширование доменных входов запрещено
 Set-UacHardening
 Set-AutorunHardening
-Set-AuditPolicy -SecurityLogSizeKb 524288
-Set-DefenderBaseline
+
+if ($Level -eq 'Strict') {
+    Set-AuditPolicy -SecurityLogSizeKb 1048576 -Strict
+    # Пароли администраторов: строже, чем на рядовых узлах.
+    Set-PasswordPolicy -MinLength 16 -MaxAgeDays 45 -LockoutThreshold 3 -LockoutDurationMin 60
+    Set-UserRightsHardening
+    Set-CredentialProtection -SkipCredentialGuard:$SkipCredentialGuard
+    Set-NetworkStackHardening
+    Set-TelemetryHardening
+    Set-UpdateHardening
+    Set-ScriptHostHardening
+    Set-PowerShellHardening -ExecutionPolicy AllSigned
+    Set-LegalNotice
+    Set-DefenderStrict
+    # Полный запрет съёмных носителей: узел управления не должен служить
+    # каналом переноса сведений из контура.
+    Set-RemovableStorageHardening -Mode DenyAll
+    Set-AppLockerBaseline -Enforce:$EnforceAppLocker -AllowedPaths @(
+        'C:\Program Files (x86)\Kaspersky Lab\'
+        'C:\Program Files\Kaspersky Lab\'
+    )
+} else {
+    Set-AuditPolicy -SecurityLogSizeKb 524288
+    Set-DefenderBaseline
+    Set-PowerShellHardening -ExecutionPolicy AllSigned
+    Write-BaselineFallbackNotice
+}
 
 # ---------------------------------------------------------------- RDP: усиленный профиль
 
@@ -61,36 +106,43 @@ Set-RegValue -Path $ts -Name 'MaxIdleTime' -Value $idleMs -Comment "(разры�
 Set-RegValue -Path $ts -Name 'MaxDisconnectionTime' -Value 60000
 Set-RegValue -Path $ts -Name 'fResetBroken' -Value 1
 Set-RegValue -Path $ts -Name 'fPromptForPassword' -Value 1 -Comment '(всегда запрашивать пароль)'
+Set-RegValue -Path $ts -Name 'fSingleSessionPerUser' -Value 1 -Comment '(один сеанс на пользователя)'
 
-# Блокировка рабочего стола при простое
+if ($Level -eq 'Strict') {
+    # Ограничение количества и длительности сеансов
+    Set-RegValue -Path $ts -Name 'MaxConnectionTime' -Value 43200000 -Comment '(предельная длительность сеанса 12 ч)'
+    Set-RegValue -Path $ts -Name 'fDisableAutoReconnect' -Value 1
+    # Запись сеансов средствами узла не ведётся: контроль действий
+    # обеспечивается журналом действий администраторов KSC и стенограммами PowerShell.
+}
+
 Set-RegValue -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' -Name 'InactivityTimeoutSecs' -Value ($IdleLockMinutes * 60)
 
 # ---------------------------------------------------------------- Делегирование учётных данных
 
-Write-KscLog '--- Защита учётных данных ---'
+Write-KscLog '--- Делегирование учётных данных ---'
 $cd = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\CredentialsDelegation'
 Set-RegValue -Path $cd -Name 'AllowProtectedCreds' -Value 1 -Comment '(Restricted Admin / Remote Credential Guard)'
 Set-RegValue -Path $cd -Name 'RestrictedRemoteAdministration' -Value 1
 Set-RegValue -Path $cd -Name 'RestrictedRemoteAdministrationType' -Value 3 -Comment '(Restricted Admin либо Remote Credential Guard)'
-
-# Запрет сохранения паролей в диспетчере учётных данных
 Set-RegValue -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa' -Name 'DisableDomainCreds' -Value 1
 
-# ---------------------------------------------------------------- PowerShell
-
-Write-KscLog '--- PowerShell ---'
-Set-RegValue -Path 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\PowerShell' -Name 'EnableScripts' -Value 1
-Set-RegValue -Path 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\PowerShell' -Name 'ExecutionPolicy' -Value 'AllSigned' -Type String `
-    -Comment '(запуск только подписанных сценариев)'
-Set-RegValue -Path 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\PowerShell\Transcription' -Name 'EnableTranscripting' -Value 1
-Set-RegValue -Path 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\PowerShell\Transcription' -Name 'OutputDirectory' -Value 'C:\ProgramData\PSTranscripts' -Type String
-Set-RegValue -Path 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\PowerShell\Transcription' -Name 'EnableInvocationHeader' -Value 1
-Write-KscLog '  ! Политика AllSigned требует подписи скриптов этого репозитория корпоративным сертификатом.' 'WARN'
-Write-KscLog '    До внедрения подписи используйте RemoteSigned, иначе скрипты развёртывания не запустятся.' 'WARN'
+if ($Level -eq 'Strict') {
+    # Запрет сохранения паролей в браузере и диспетчере учётных данных
+    Set-RegValue -Path 'HKLM:\SOFTWARE\Policies\Microsoft\Edge' -Name 'PasswordManagerEnabled' -Value 0
+    Set-RegValue -Path 'HKLM:\SOFTWARE\Policies\Microsoft\Edge' -Name 'AutofillCreditCardEnabled' -Value 0
+    Set-RegValue -Path 'HKLM:\SOFTWARE\Policies\Microsoft\Edge' -Name 'BackgroundModeEnabled' -Value 0
+    Write-KscLog '  + сохранение паролей в браузере запрещено (Web Console открывается без сохранения учётных данных)' 'OK'
+}
 
 # ---------------------------------------------------------------- Службы
 
-Disable-UnneededServices
+$keepServices = @(
+    'TermService'    # узел принимает подключения администраторов
+    'SessionEnv'
+    'UmRdpService'
+)
+Disable-UnneededServices -Keep $keepServices -Strict:($Level -eq 'Strict')
 
 # ---------------------------------------------------------------- Локальные администраторы
 
@@ -113,4 +165,5 @@ $reportDir = 'C:\ProgramData\KscDeployment\reports'
 if (-not (Test-Path $reportDir)) { New-Item -ItemType Directory -Path $reportDir -Force | Out-Null }
 $soft | Export-Csv (Join-Path $reportDir ("rds-software-{0}.csv" -f (Get-Date -Format 'yyyyMMdd'))) -NoTypeInformation -Encoding UTF8
 
-Write-HardeningSummary -Role 'Admin Workstation (RDS)'
+Write-KscLog 'Проверьте доступность консолей после перезагрузки: 00_Install-KscConsole.ps1 выполняет проверку портов.' 'WARN'
+Write-HardeningSummary -Role "Admin Workstation (RDS, $Level)"

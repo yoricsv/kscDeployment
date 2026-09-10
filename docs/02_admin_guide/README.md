@@ -203,20 +203,31 @@ cd C:\deploy\kscDeployment\hosts\ksc-server
 
 ### Этап 8. Защищённость Сервера
 
+Применяется расширенный (строгий) профиль. Состав мер, различия по типам
+узлов, меры в режиме наблюдения и порядок отката — в приложении
+[Расширенный профиль защищённости узлов](hardening_profile.md).
+
 ```powershell
 .\hardening\Invoke-Hardening.ps1 -WhatIf     # предварительный просмотр
-.\hardening\Invoke-Hardening.ps1
+.\hardening\Invoke-Hardening.ps1            # расширенный профиль
+.\hardening\Invoke-Hardening.ps1 -Level Baseline   # базовый профиль
 ```
 
 Изменения реестра сохраняются в файл отката
-`C:\ProgramData\KscDeployment\rollback\rollback-<дата>.json`. Отмена:
+`C:\ProgramData\KscDeployment\rollback\rollback-<дата>.json`, локальная
+политика безопасности — в `secpol-<дата>.inf` того же каталога. Отмена:
 
 ```powershell
 ..\..\common\Restore-Baseline.ps1 -RollbackFile <путь>
+secedit /configure /db secedit.sdb /cfg <путь к secpol-<дата>.inf> /overwrite
 ```
 
-Часть параметров (криптографические протоколы, SMBv1, защита процесса LSA)
-применяется после перезагрузки.
+Часть параметров (криптографические протоколы, SMBv1, защита процесса LSA,
+защита на основе виртуализации) применяется после перезагрузки.
+
+Правила сокращения поверхности атаки и управление запуском программ
+включаются в режиме наблюдения: блокировка без предварительного разбора
+событий останавливает работу Сервера и СУБД.
 
 ### Этап 9. Приёмочная проверка
 
@@ -280,8 +291,13 @@ sudo ./00_prepare-host.sh
 sudo ./10_install-netagent.sh /path/klnagent64_<ver>_amd64.deb
 sudo ./20_install-kesl.sh /path/kesl_<ver>_amd64.deb
 sudo ./30_test-agent.sh
-sudo ./hardening/harden.sh --check     # затем --apply
+sudo ./hardening/harden.sh --check                    # затем --apply
+sudo ./hardening/harden.sh --apply --level baseline   # если строгий профиль пока неприменим
 ```
+
+Расширенный профиль изменяет условия входа по SSH (наборы алгоритмов,
+запрет проброса) — не завершайте текущий сеанс до проверки нового
+подключения с АРМ.
 
 Порядок обязателен: без Агента приложение защиты не получит политику и
 лицензию.
