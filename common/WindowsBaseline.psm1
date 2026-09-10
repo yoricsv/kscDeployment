@@ -588,8 +588,11 @@ function Set-CredentialProtection {
     if ($vbs -and $vbs.VirtualizationBasedSecurityStatus -eq 2) {
         Write-KscLog '  + защита на основе виртуализации активна' 'OK'
     } else {
-        Write-KscLog '  ! Защита на основе виртуализации не активна: проверьте поддержку вложенной виртуализации' 'WARN'
-        Write-KscLog '    на уровне гипервизора и режим загрузки UEFI с безопасной загрузкой. Параметры применятся после перезагрузки.' 'WARN'
+        Write-KscLog '  ! Изоляция учётных данных не обеспечена: защита на основе виртуализации не активна.' 'ERROR'
+        Write-KscLog '    Проверьте поддержку вложенной виртуализации на гипервизоре и режим загрузки UEFI' 'ERROR'
+        Write-KscLog '    с безопасной загрузкой, после перезагрузки повторите проверку (60_Test-Deployment.ps1).' 'ERROR'
+        Write-KscLog '    До активации узел не соответствует расширенному профилю: либо устраните причину,' 'ERROR'
+        Write-KscLog '    либо оформите отклонение и запускайте с -SkipCredentialGuard.' 'ERROR'
     }
 }
 
@@ -921,6 +924,9 @@ function Set-AppLockerBaseline {
 
     $extra = ''
     foreach ($path in $verified) {
+        # Значение подставляется в XML политики: специальные символы экранируются,
+        # иначе путь с разметкой добавит в политику произвольные правила.
+        $path = [System.Security.SecurityElement]::Escape($path)
         $extra += @"
     <FilePathRule Id="$([guid]::NewGuid())" Name="Разрешено: $path" Description="Согласованное расположение" UserOrGroupSid="S-1-1-0" Action="Allow">
       <Conditions><FilePathCondition Path="$path*" /></Conditions>
