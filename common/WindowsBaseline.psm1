@@ -580,7 +580,9 @@ function Set-CredentialProtection {
     Set-RegValue -Path $dg -Name 'RequirePlatformSecurityFeatures' -Value 1 -Comment '(безопасная загрузка)'
     Set-RegValue -Path "$dg\Scenarios\HypervisorEnforcedCodeIntegrity" -Name 'Enabled' -Value 1
     Set-RegValue -Path "$dg\Scenarios\HypervisorEnforcedCodeIntegrity" -Name 'Locked' -Value 0
-    Set-RegValue -Path $lsa -Name 'LsaCfgFlags' -Value 1 -Comment '(Credential Guard с блокировкой UEFI)'
+    # Значение 2 — Credential Guard без блокировки UEFI: блокировка сохраняется
+    # в прошивке и не снимается восстановлением реестра, то есть откат перестаёт работать.
+    Set-RegValue -Path $lsa -Name 'LsaCfgFlags' -Value 2 -Comment '(Credential Guard без блокировки UEFI)'
 
     $vbs = Get-CimInstance -ClassName Win32_DeviceGuard -Namespace 'root\Microsoft\Windows\DeviceGuard' -ErrorAction SilentlyContinue
     if ($vbs -and $vbs.VirtualizationBasedSecurityStatus -eq 2) {
@@ -830,6 +832,43 @@ function Set-LegalNotice {
     Set-RegValue -Path $p -Name 'legalnoticetext' -Value $Text -Type String
 }
 
+function Test-PathWritableByUsers {
+    <#
+        Проверка права записи для непривилегированных учётных записей в каталоге
+        и вложенных каталогах. Правило AppLocker по пути разрешает запуск всем
+        пользователям, поэтому запись в такое расположение равносильна обходу политики.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Path)
+
+    $risky = @('S-1-1-0', 'S-1-5-11', 'S-1-5-32-545', 'S-1-5-4', 'S-1-5-32-546')
+    $writeMask = [System.Security.AccessControl.FileSystemRights]::WriteData -bor
+                 [System.Security.AccessControl.FileSystemRights]::AppendData -bor
+                 [System.Security.AccessControl.FileSystemRights]::Modify -bor
+                 [System.Security.AccessControl.FileSystemRights]::FullControl -bor
+                 [System.Security.AccessControl.FileSystemRights]::ChangePermissions -bor
+                 [System.Security.AccessControl.FileSystemRights]::TakeOwnership
+
+    $targets = @($Path)
+    $targets += (Get-ChildItem -LiteralPath $Path -Directory -Recurse -Force -ErrorAction SilentlyContinue |
+        Select-Object -ExpandProperty FullName)
+
+    foreach ($t in $targets) {
+        $acl = Get-Acl -LiteralPath $t -ErrorAction SilentlyContinue
+        if (-not $acl) { continue }
+        foreach ($ace in $acl.Access) {
+            if ($ace.AccessControlType -ne 'Allow') { continue }
+            $sid = try { $ace.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value } catch { $null }
+            if ($sid -notin $risky) { continue }
+            if (($ace.FileSystemRights -band $writeMask) -ne 0) {
+                Write-KscLog "    запись разрешена для $($ace.IdentityReference): $t" 'WARN'
+                return $true
+            }
+        }
+    }
+    return $false
+}
+
 function Set-AppLockerBaseline {
     <#
         Управление запуском программ (AppLocker).
@@ -843,7 +882,8 @@ function Set-AppLockerBaseline {
     [CmdletBinding(SupportsShouldProcess)]
     param(
         [switch]$Enforce,
-        [string[]]$AllowedPaths = @()
+        [string[]]$AllowedPaths = @(),
+        [switch]$SkipPathAclCheck
     )
     Write-KscLog '--- Управление запуском программ (AppLocker) ---'
 
@@ -858,8 +898,29 @@ function Set-AppLockerBaseline {
     }
 
     $mode = if ($Enforce) { 'Enabled' } else { 'AuditOnly' }
-    $extra = ''
+    # Правило по пути разрешает запуск всем пользователям: расположения с правом записи
+    # у обычных пользователей в политику не включаются.
+    $verified = @()
     foreach ($path in $AllowedPaths) {
+        $local = $path.TrimEnd('\')
+        if (-not (Test-Path -LiteralPath $local)) {
+            Write-KscLog "  ! расположение отсутствует, правило не создано: $path" 'WARN'
+            continue
+        }
+        if ($SkipPathAclCheck) {
+            Write-KscLog "  ! проверка разрешений отключена (-SkipPathAclCheck): $path" 'WARN'
+        } elseif (Test-PathWritableByUsers -Path $local) {
+            Write-KscLog "  ! расположение доступно на запись обычным пользователям: $path" 'ERROR'
+            Write-KscLog '    Правило по пути не создано: такое разрешение позволило бы запускать' 'WARN'
+            Write-KscLog '    произвольный код в обход политики. Снимите право записи (icacls)' 'WARN'
+            Write-KscLog '    либо задайте правила по издателю или хешу вручную.' 'WARN'
+            continue
+        }
+        $verified += $path
+    }
+
+    $extra = ''
+    foreach ($path in $verified) {
         $extra += @"
     <FilePathRule Id="$([guid]::NewGuid())" Name="Разрешено: $path" Description="Согласованное расположение" UserOrGroupSid="S-1-1-0" Action="Allow">
       <Conditions><FilePathCondition Path="$path*" /></Conditions>
@@ -970,6 +1031,18 @@ function Set-TelemetryHardening {
     Set-RegValue -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Remote Assistance' -Name 'fAllowToGetHelp' -Value 0
 }
 
+function Write-BaselineFallbackNotice {
+    <#
+        Профиль Baseline задаёт меньший набор мер, но не снимает меры,
+        уже применённые ранее расширенным профилем: снятие выполняется откатом.
+    #>
+    Write-KscLog '  ! Профиль Baseline применяет меньший набор мер и НЕ отменяет ранее' 'WARN'
+    Write-KscLog '    применённый расширенный профиль. Если строгие меры уже были применены,' 'WARN'
+    Write-KscLog '    сначала выполните откат: common\Restore-Baseline.ps1 -RollbackFile <путь>,' 'WARN'
+    Write-KscLog '    secedit /configure /db secedit.sdb /cfg <secpol-*.inf> /overwrite и восстановление' 'WARN'
+    Write-KscLog '    политики AppLocker из applocker-before-*.xml.' 'WARN'
+}
+
 function Write-HardeningSummary {
     param([string]$Role)
     Write-KscLog "=== Харденинг роли '$Role' завершён ===" 'OK'
@@ -986,4 +1059,4 @@ Export-ModuleMember -Function Set-RegValue, Disable-LegacyProtocols, Set-TlsHard
     Backup-LocalSecurityPolicy, Invoke-SecEditTemplate, Set-PasswordPolicy, Set-UserRightsHardening,
     Set-CredentialProtection, Set-NetworkStackHardening, Set-ScriptHostHardening, Set-PowerShellHardening,
     Set-DefenderStrict, Set-RemovableStorageHardening, Set-LegalNotice, Set-AppLockerBaseline,
-    Set-UpdateHardening, Set-TelemetryHardening
+    Set-UpdateHardening, Set-TelemetryHardening, Write-BaselineFallbackNotice, Test-PathWritableByUsers

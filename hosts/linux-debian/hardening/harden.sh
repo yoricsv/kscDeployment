@@ -54,6 +54,11 @@ strict() { [ "$LEVEL" = 'strict' ]; }
 
 log "=== Харденинг узла Debian (режим: ${MODE}, профиль: ${LEVEL}) ==="
 [ "$MODE" = '--apply' ] || log 'Режим проверки: изменения не вносятся. Для применения запустите с --apply.' WARN
+if ! strict; then
+    log 'Профиль baseline применяет меньший набор мер и НЕ отменяет ранее применённый строгий' WARN
+    log 'профиль: восстановите файлы .ksc-bak-<дата>, удалите /etc/sysctl.d/99-ksc-hardening.conf,' WARN
+    log '/etc/modprobe.d/99-ksc-hardening.conf и правила auditd, затем перезагрузите узел.' WARN
+fi
 
 # ------------------------------------------------------------------ 1. SSH
 

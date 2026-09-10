@@ -83,6 +83,7 @@ if ($Level -eq 'Strict') {
     Set-AuditPolicy -SecurityLogSizeKb 524288
     Set-DefenderBaseline
     Set-PowerShellHardening -ExecutionPolicy AllSigned
+    Write-BaselineFallbackNotice
 }
 
 # ---------------------------------------------------------------- RDP: усиленный профиль

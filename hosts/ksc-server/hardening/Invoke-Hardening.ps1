@@ -89,6 +89,7 @@ if ($Level -eq 'Strict') {
 } else {
     Set-AuditPolicy -SecurityLogSizeKb 1048576
     Set-DefenderBaseline
+    Write-BaselineFallbackNotice
 }
 
 # ---------------------------------------------------------------- Службы

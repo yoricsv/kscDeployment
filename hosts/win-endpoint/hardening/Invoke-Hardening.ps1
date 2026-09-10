@@ -95,6 +95,7 @@ if ($Level -eq 'Strict') {
     Set-AuditPolicy -SecurityLogSizeKb 262144
     Set-DefenderBaseline
     Set-RemovableStorageHardening -Mode DenyWrite
+    Write-BaselineFallbackNotice
 }
 
 # ---------------------------------------------------------------- Удалённый доступ
@@ -113,8 +114,10 @@ if ($AllowRdp) {
 # ---------------------------------------------------------------- Брандмауэр узла
 
 Write-KscLog '--- Брандмауэр узла ---'
-Set-NetFirewallProfile -Profile Domain, Private, Public -Enabled True `
-    -DefaultInboundAction Block -DefaultOutboundAction Allow -NotifyOnListen False
+if ($PSCmdlet.ShouldProcess('Брандмауэр', 'Включить, входящие по умолчанию — блокировать')) {
+    Set-NetFirewallProfile -Profile Domain, Private, Public -Enabled True `
+        -DefaultInboundAction Block -DefaultOutboundAction Allow -NotifyOnListen False
+}
 
 if ($Level -eq 'Strict' -and $PSCmdlet.ShouldProcess('Брандмауэр', 'Включить регистрацию отклонённых пакетов')) {
     Set-NetFirewallProfile -Profile Domain, Private, Public `
@@ -127,10 +130,12 @@ foreach ($rule in @(
     @{ N = 'KSC Agent 15000/udp'; P = 'UDP'; Port = $KSC.PortServerToAgent }
     @{ N = 'KSC Agent 15001/udp'; P = 'UDP'; Port = 15001 }
 )) {
-    Get-NetFirewallRule -DisplayName $rule.N -ErrorAction SilentlyContinue | Remove-NetFirewallRule
-    New-NetFirewallRule -DisplayName $rule.N -Group 'KSC Deployment' -Direction Inbound `
-        -Protocol $rule.P -LocalPort $rule.Port -RemoteAddress $KSC.KscIp -Action Allow | Out-Null
-    Write-KscLog "  + $($rule.N) (только с Сервера $($KSC.KscIp))" 'OK'
+    if ($PSCmdlet.ShouldProcess($rule.N, 'Создать правило брандмауэра')) {
+        Get-NetFirewallRule -DisplayName $rule.N -ErrorAction SilentlyContinue | Remove-NetFirewallRule
+        New-NetFirewallRule -DisplayName $rule.N -Group 'KSC Deployment' -Direction Inbound `
+            -Protocol $rule.P -LocalPort $rule.Port -RemoteAddress $KSC.KscIp -Action Allow | Out-Null
+        Write-KscLog "  + $($rule.N) (только с Сервера $($KSC.KscIp))" 'OK'
+    }
 }
 
 # Удалённая установка средствами KSC требует доступа к admin$ и удалённому
@@ -140,14 +145,18 @@ if ($AllowRemoteDeploy) {
         @{ N = 'KSC Remote deploy SMB'; Port = 445 }
         @{ N = 'KSC Remote deploy RPC'; Port = 135 }
     )) {
-        Get-NetFirewallRule -DisplayName $rule.N -ErrorAction SilentlyContinue | Remove-NetFirewallRule
-        New-NetFirewallRule -DisplayName $rule.N -Group 'KSC Deployment' -Direction Inbound `
-            -Protocol TCP -LocalPort $rule.Port -RemoteAddress $KSC.KscIp -Action Allow | Out-Null
-        Write-KscLog "  + $($rule.N) (только с Сервера $($KSC.KscIp))" 'OK'
+        if ($PSCmdlet.ShouldProcess($rule.N, 'Создать правило брандмауэра')) {
+            Get-NetFirewallRule -DisplayName $rule.N -ErrorAction SilentlyContinue | Remove-NetFirewallRule
+            New-NetFirewallRule -DisplayName $rule.N -Group 'KSC Deployment' -Direction Inbound `
+                -Protocol TCP -LocalPort $rule.Port -RemoteAddress $KSC.KscIp -Action Allow | Out-Null
+            Write-KscLog "  + $($rule.N) (только с Сервера $($KSC.KscIp))" 'OK'
+        }
     }
 } else {
     foreach ($n in @('KSC Remote deploy SMB', 'KSC Remote deploy RPC')) {
-        Get-NetFirewallRule -DisplayName $n -ErrorAction SilentlyContinue | Remove-NetFirewallRule
+        if ($PSCmdlet.ShouldProcess($n, 'Удалить правило брандмауэра')) {
+            Get-NetFirewallRule -DisplayName $n -ErrorAction SilentlyContinue | Remove-NetFirewallRule
+        }
     }
     Write-KscLog '  + доступ к SMB и RPC закрыт полностью' 'OK'
     Write-KscLog '    Удалённая установка и переустановка Агента средствами KSC на этом узле работать не будет:' 'WARN'
