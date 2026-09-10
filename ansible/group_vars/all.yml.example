@@ -1,0 +1,15 @@
+# Параметры должны совпадать с common/config.ps1 и hosts/linux-debian/common.sh.
+ksc_server_fqdn: ksc.domain.local
+ksc_server_ip: 10.20.30.20
+ksc_agent_port: 13000
+ksc_server_to_agent_port: 15000
+ksc_admin_workstation: 10.20.30.15
+
+# Дистрибутивы размещаются на локальном узле управления: доступ в интернет
+# из аттестованного контура отсутствует.
+klnagent_deb_src: files/klnagent64_amd64.deb
+kesl_deb_src: files/kesl_amd64.deb
+
+# Участие в KSN исключено: передача данных за пределы контура не допускается.
+kesl_use_ksn: false
+kesl_update_source: SCServer

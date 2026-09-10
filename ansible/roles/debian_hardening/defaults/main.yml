@@ -1,0 +1,7 @@
+---
+ssh_allow_from: 10.20.30.15
+ssh_permit_root_login: 'no'
+ssh_password_authentication: 'no'
+ksc_server_ip: 10.20.30.20
+ksc_server_to_agent_port: 15000
+disable_unattended_upgrades: true

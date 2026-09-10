@@ -1,0 +1,6 @@
+---
+kesl_deb_src: ''
+kesl_use_ksn: false
+kesl_update_source: SCServer
+kesl_service: kesl
+kesl_dir: /opt/kaspersky/kesl

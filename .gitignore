@@ -1,0 +1,33 @@
+# Секреты и параметры доступа
+*.pfx
+*.p12
+*.key
+*.pem
+secrets*
+*password*
+*.credential
+
+# Локальные параметры, отличающиеся от шаблонных
+common/config.local.ps1
+hosts/linux-debian/common.local.sh
+
+# Дистрибутивы: в репозитории не хранятся
+*.msi
+*.exe
+*.deb
+*.rpm
+*.iso
+
+# Журналы и отчёты выполнения
+*.log
+reports/
+rollback/
+*.ksc-bak-*
+
+# Резервные копии
+*.zip
+*.klbackup
+
+# Служебные файлы
+Thumbs.db
+.DS_Store

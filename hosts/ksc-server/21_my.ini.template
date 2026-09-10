@@ -1,0 +1,87 @@
+#
+# Конфигурация MariaDB для Kaspersky Security Center
+# Профиль: до 1000 управляемых устройств, 16 ГБ ОЗУ, хранение событий 365 дней.
+#
+# Плейсхолдеры вида {{NAME}} подставляются скриптом 20_Install-MariaDB.ps1.
+# Файл размещается по пути <MariaDB>\data\my.ini и требует перезапуска службы.
+#
+
+[client]
+port={{PORT}}
+default-character-set=utf8
+
+[mysqld]
+# --- Размещение и сеть ---------------------------------------------------
+datadir={{DATADIR}}
+port={{PORT}}
+bind-address=127.0.0.1
+skip-name-resolve
+# СУБД принимает подключения только с локального узла: Сервер администрирования
+# работает на том же хосте, внешний доступ к 3306 не требуется и запрещён.
+
+# --- Кодировка -----------------------------------------------------------
+character-set-server=utf8
+collation-server=utf8_general_ci
+
+# --- Подсистема хранения -------------------------------------------------
+default-storage-engine=INNODB
+innodb_file_per_table=ON
+
+# Размер пула буферов InnoDB. ~40% ОЗУ: остальное требуется процессам KSC.
+innodb_buffer_pool_size={{INNODB_BUFFER_POOL}}
+innodb_buffer_pool_instances=4
+
+# Размер журнала повторного выполнения. ЗАДАЁТСЯ ДО ПЕРВОГО ЗАПУСКА:
+# изменение на работающей БД требует корректной остановки службы.
+innodb_log_file_size={{INNODB_LOG_FILE_SIZE}}
+innodb_log_buffer_size=64M
+
+innodb_thread_concurrency=20
+innodb_max_dirty_pages_pct=90
+innodb_lock_wait_timeout=300
+
+# Сброс журнала транзакций раз в секунду вместо каждой транзакции.
+# Компромисс, рекомендованный вендором: существенный прирост
+# производительности ценой возможной потери последней секунды транзакций
+# при аварийном отключении питания. Для БД мониторинга допустимо.
+innodb_flush_log_at_trx_commit=0
+innodb_flush_method=normal
+
+# --- Соединения и пакеты -------------------------------------------------
+max_allowed_packet=32M
+max_connections=151
+thread_cache_size=32
+wait_timeout=28800
+interactive_timeout=28800
+
+# --- Буферы запросов -----------------------------------------------------
+sort_buffer_size=10M
+join_buffer_size=100M
+join_buffer_space_limit=300M
+join_cache_level=8
+tmp_table_size=512M
+max_heap_table_size=512M
+key_buffer_size=200M
+
+# --- Оптимизатор ---------------------------------------------------------
+# Отключение rowid_filter обязательно: с ним планировщик MariaDB строит
+# неоптимальные планы для запросов KSC к таблицам событий.
+optimizer_switch='rowid_filter=off'
+optimizer_search_depth=8
+
+# --- Журналирование ------------------------------------------------------
+log_error={{DATADIR}}\mariadb-error.log
+slow_query_log=1
+slow_query_log_file={{DATADIR}}\mariadb-slow.log
+long_query_time=10
+
+# Двоичный журнал по умолчанию выключен: репликация не используется,
+# а его рост на томе с данными приводит к переполнению.
+skip-log-bin
+
+[mysqldump]
+max_allowed_packet=32M
+quick
+
+[mysql]
+default-character-set=utf8

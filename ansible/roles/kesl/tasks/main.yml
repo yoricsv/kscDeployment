@@ -1,0 +1,6 @@
+---
+- name: Роль не реализована — используйте hosts/linux-debian/20_install-kesl.sh
+  ansible.builtin.fail:
+    msg: >-
+      Роль kesl является заготовкой. Установка выполняется сценарием
+      hosts/linux-debian/20_install-kesl.sh.

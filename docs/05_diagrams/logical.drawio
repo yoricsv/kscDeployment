@@ -1,0 +1,134 @@
+<mxfile host="app.diagrams.net" modified="2026-01-01T00:00:00.000Z" agent="kscDeployment" version="24.0.0" type="device">
+  <diagram id="logical" name="Логическая схема (информационные потоки)">
+    <mxGraphModel dx="1600" dy="1200" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1700" pageHeight="1200" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <mxCell id="title" value="Логическая схема: информационные потоки системы антивирусной защиты&#10;Идентификаторы потоков соответствуют таблице information_flows.md" style="text;html=1;align=center;verticalAlign=middle;fontSize=17;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="400" y="20" width="900" height="50" as="geometry" />
+        </mxCell>
+
+        <mxCell id="lane_mgmt" value="Контур управления&#10;(доступ по перечню адресов)" style="swimlane;html=1;startSize=50;fillColor=#d5e8d4;strokeColor=#82b366;verticalAlign=top;fontStyle=1;horizontal=1" vertex="1" parent="1">
+          <mxGeometry x="60" y="100" width="360" height="420" as="geometry" />
+        </mxCell>
+        <mxCell id="l_rds" value="АРМ администратора&#10;10.20.30.15" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontStyle=1" vertex="1" parent="lane_mgmt">
+          <mxGeometry x="30" y="70" width="300" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="l_roles" value="Роли доступа:&#10;KSC-Admins — полное управление&#10;KSC-Operators — просмотр и задачи&#10;KSC-Auditors — только просмотр" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;align=left;spacingLeft=8;fontSize=11" vertex="1" parent="lane_mgmt">
+          <mxGeometry x="30" y="150" width="300" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="l_szi" value="Смежные СЗИ&#10;адреса: уточняются" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00" vertex="1" parent="lane_mgmt">
+          <mxGeometry x="30" y="250" width="300" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="l_siem" value="Система мониторинга событий&#10;приём syslog/CEF" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00" vertex="1" parent="lane_mgmt">
+          <mxGeometry x="30" y="320" width="300" height="50" as="geometry" />
+        </mxCell>
+
+        <mxCell id="lane_srv" value="Сервер администрирования ksc.domain.local (10.20.30.20)" style="swimlane;html=1;startSize=40;fillColor=#e1d5e7;strokeColor=#9673a6;verticalAlign=top;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="600" y="100" width="480" height="640" as="geometry" />
+        </mxCell>
+        <mxCell id="s_api" value="Интерфейсы управления&#10;MMC 13291/tcp · OpenAPI 13299/tcp · Web Console 8080/tcp&#10;RDP 3389/tcp · WinRM 5985/tcp" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;fontSize=11" vertex="1" parent="lane_srv">
+          <mxGeometry x="30" y="60" width="420" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="s_core" value="Ядро Сервера администрирования&#10;политики · задачи · группы устройств · правила перемещения" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;fontStyle=1;fontSize=11" vertex="1" parent="lane_srv">
+          <mxGeometry x="30" y="150" width="420" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="s_agentport" value="Приём подключений Агентов&#10;13000/tcp (SSL) · 13000/udp · 14000/tcp" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;fontSize=11" vertex="1" parent="lane_srv">
+          <mxGeometry x="30" y="240" width="420" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="s_web" value="Веб-сервер 8060/8061 tcp&#10;раздача автономных пакетов установки" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;fontSize=11" vertex="1" parent="lane_srv">
+          <mxGeometry x="30" y="320" width="420" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="s_share" value="Общий ресурс KLSHARE (E:) — 445/tcp&#10;дистрибутивы и пакеты установки для групповой политики" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;fontSize=11" vertex="1" parent="lane_srv">
+          <mxGeometry x="30" y="395" width="420" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="s_db" value="MariaDB — 3306/tcp, только 127.0.0.1&#10;события и отчёты, срок хранения 365 суток&#10;сетевой доступ к базе данных исключён" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=11" vertex="1" parent="lane_srv">
+          <mxGeometry x="30" y="470" width="420" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="s_bkp" value="Резервные копии (E:) → сетевой ресурс 445/tcp&#10;ежедневно, 30 копий, сертификат Сервера отдельно" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;fontSize=11" vertex="1" parent="lane_srv">
+          <mxGeometry x="30" y="560" width="420" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="lane_nodes" value="Защищаемые узлы 10.20.30.0/24" style="swimlane;html=1;startSize=40;fillColor=#dae8fc;strokeColor=#6c8ebf;verticalAlign=top;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="1240" y="100" width="400" height="640" as="geometry" />
+        </mxCell>
+        <mxCell id="n_agent" value="Агент администрирования&#10;приём команд Сервера 15000/udp&#10;синхронизация каждые 15 мин" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=11" vertex="1" parent="lane_nodes">
+          <mxGeometry x="30" y="60" width="340" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="n_kes" value="Средство защиты узла&#10;KES for Windows / KESL&#10;параметры задаются политикой" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=11" vertex="1" parent="lane_nodes">
+          <mxGeometry x="30" y="150" width="340" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="n_win" value="Windows в домене — установка групповой политикой" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11" vertex="1" parent="lane_nodes">
+          <mxGeometry x="30" y="250" width="340" height="45" as="geometry" />
+        </mxCell>
+        <mxCell id="n_lin" value="Debian в домене (8) — установка сценариями вручную" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=11" vertex="1" parent="lane_nodes">
+          <mxGeometry x="30" y="310" width="340" height="45" as="geometry" />
+        </mxCell>
+        <mxCell id="n_std" value="Узлы вне домена — автономные пакеты, ручной учёт" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=11" vertex="1" parent="lane_nodes">
+          <mxGeometry x="30" y="370" width="340" height="45" as="geometry" />
+        </mxCell>
+
+        <mxCell id="lane_ad" value="Служба каталогов" style="swimlane;html=1;startSize=40;fillColor=#dae8fc;strokeColor=#6c8ebf;verticalAlign=top;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="600" y="800" width="480" height="220" as="geometry" />
+        </mxCell>
+        <mxCell id="a_dc" value="Контроллеры домена 10.20.30.10 / .11&#10;LDAP 389/tcp · Kerberos 88 · DNS 53 · SMB 445 (SYSVOL)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=11" vertex="1" parent="lane_ad">
+          <mxGeometry x="30" y="55" width="420" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="a_gpo" value="Групповая политика установки Агента&#10;не применяется к подразделению контроллеров домена" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=11" vertex="1" parent="lane_ad">
+          <mxGeometry x="30" y="130" width="420" height="60" as="geometry" />
+        </mxCell>
+
+        <mxCell id="f1" value="F1 · управление&#10;13291, 13299, 8080/tcp&#10;TLS · только с 10.20.30.15" style="edgeStyle=orthogonalEdgeStyle;html=1;rounded=0;strokeWidth=3;strokeColor=#82b366;fontSize=11;exitX=1;exitY=0.5;entryX=0;entryY=0.3" edge="1" parent="1" source="l_rds" target="s_api">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="f2" value="F2 · администрирование ОС&#10;3389/tcp, 5985/tcp" style="edgeStyle=orthogonalEdgeStyle;html=1;rounded=0;strokeWidth=2;strokeColor=#82b366;dashed=1;fontSize=11" edge="1" parent="1" source="l_roles" target="s_api">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="f3" value="F3 · контроль состояния Сервера&#10;по согласованному перечню адресов" style="edgeStyle=orthogonalEdgeStyle;html=1;rounded=0;strokeWidth=2;strokeColor=#d79b00;dashed=1;fontSize=11" edge="1" parent="1" source="l_szi" target="s_api">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="f4" value="F4 · события syslog/CEF 514&#10;важность: критические и предупреждения" style="edgeStyle=orthogonalEdgeStyle;html=1;rounded=0;strokeWidth=2;strokeColor=#d79b00;fontSize=11" edge="1" parent="1" source="s_core" target="l_siem">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="f5" value="F5 · состояние узла и события&#10;13000/tcp SSL, узел → Сервер" style="edgeStyle=orthogonalEdgeStyle;html=1;rounded=0;strokeWidth=3;strokeColor=#6c8ebf;fontSize=11" edge="1" parent="1" source="n_agent" target="s_agentport">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="f6" value="F6 · политики, задачи, обновления баз&#10;15000/udp — команда синхронизации,&#10;передача данных по 13000/tcp" style="edgeStyle=orthogonalEdgeStyle;html=1;rounded=0;strokeWidth=3;strokeColor=#9673a6;fontSize=11" edge="1" parent="1" source="s_core" target="n_agent">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="f7" value="F7 · загрузка автономных пакетов&#10;8060/8061 tcp" style="edgeStyle=orthogonalEdgeStyle;html=1;rounded=0;strokeWidth=2;strokeColor=#d6b656;fontSize=11" edge="1" parent="1" source="s_web" target="n_std">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="f8" value="F8 · опрос службы каталогов&#10;389/tcp, интервал 1 ч" style="edgeStyle=orthogonalEdgeStyle;html=1;rounded=0;strokeWidth=2;strokeColor=#6c8ebf;fontSize=11" edge="1" parent="1" source="s_core" target="a_dc">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="f9" value="F9 · получение пакета Агента из KLSHARE&#10;445/tcp при применении политики" style="edgeStyle=orthogonalEdgeStyle;html=1;rounded=0;strokeWidth=2;strokeColor=#6c8ebf;dashed=1;fontSize=11" edge="1" parent="1" source="a_gpo" target="s_share">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="f10" value="F10 · применение политики установки&#10;SMB 445 (SYSVOL), при загрузке узла" style="edgeStyle=orthogonalEdgeStyle;html=1;rounded=0;strokeWidth=2;strokeColor=#6c8ebf;dashed=1;fontSize=11" edge="1" parent="1" source="a_gpo" target="n_win">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="f11" value="F11 · локальное обращение к СУБД&#10;3306/tcp, только 127.0.0.1" style="edgeStyle=orthogonalEdgeStyle;html=1;rounded=0;strokeWidth=2;strokeColor=#b85450;fontSize=11" edge="1" parent="1" source="s_core" target="s_db">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="f12" value="F12 · выгрузка резервных копий&#10;445/tcp на сетевой ресурс" style="edgeStyle=orthogonalEdgeStyle;html=1;rounded=0;strokeWidth=2;strokeColor=#9673a6;dashed=1;fontSize=11" edge="1" parent="1" source="s_db" target="s_bkp">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="f13" value="F13 · удалённая установка Агента&#10;445/tcp, 135/tcp, только с Сервера" style="edgeStyle=orthogonalEdgeStyle;html=1;rounded=0;strokeWidth=2;strokeColor=#9673a6;dashed=1;fontSize=11" edge="1" parent="1" source="s_core" target="n_kes">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="note_deny" value="Запрещено правилами межсетевого экрана Сервера:&#10;· подключение к портам управления с любых адресов, кроме 10.20.30.15&#10;  и согласованного перечня смежных СЗИ;&#10;· сетевое подключение к СУБД (3306/tcp) с любого адреса;&#10;· любые исходящие обращения Сервера в сети общего пользования." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;align=left;spacingLeft=10;verticalAlign=top;spacingTop=8;fontSize=11" vertex="1" parent="1">
+          <mxGeometry x="60" y="560" width="480" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="note_ret" value="Хранение сведений:&#10;· события, отчёты, журнал действий администраторов — 365 суток;&#10;· ограничение действует одновременно по сроку и по числу событий&#10;  (исходно 20 000 000): срабатывает то, которое достигнуто раньше,&#10;  поэтому предел числа событий подлежит сверке с фактическим объёмом;&#10;· резервные копии — 30 суток." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;align=left;spacingLeft=10;verticalAlign=top;spacingTop=8;fontSize=11" vertex="1" parent="1">
+          <mxGeometry x="60" y="700" width="480" height="130" as="geometry" />
+        </mxCell>
+        <mxCell id="note_x" value="Средства управления конфигурацией (Ansible и аналогичные) не применяются:&#10;установка выполняется по мере необходимости, адресация статическая,&#10;состав сети контролируется вручную. Заготовки ролей — ansible/roles." style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;align=left;spacingLeft=10;verticalAlign=top;spacingTop=8;fontSize=11;fontStyle=2" vertex="1" parent="1">
+          <mxGeometry x="60" y="850" width="480" height="80" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

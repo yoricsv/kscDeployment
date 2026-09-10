@@ -1,0 +1,6 @@
+---
+- name: restart kesl
+  ansible.builtin.systemd:
+    name: "{{ kesl_service }}"
+    state: restarted
+    enabled: true

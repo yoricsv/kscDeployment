@@ -1,0 +1,13 @@
+---
+# Сценарий верхнего уровня. Порядок ролей обязателен: KESL без Агента
+# не получит политику и лицензию от Сервера.
+- name: Развёртывание средств защиты на узлах Debian
+  hosts: linux_domain:linux_standalone
+  become: true
+  roles:
+    - role: debian_hardening
+      tags: [hardening]
+    - role: klnagent
+      tags: [agent]
+    - role: kesl
+      tags: [kesl]

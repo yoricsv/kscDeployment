@@ -1,0 +1,8 @@
+---
+ksc_server_fqdn: ksc.domain.local
+ksc_agent_port: 13000
+ksc_server_to_agent_port: 15000
+klnagent_deb_src: ''
+klnagent_uninstall_password: ''
+klnagent_service: klnagent64
+klnagent_dir: /opt/kaspersky/klnagent64

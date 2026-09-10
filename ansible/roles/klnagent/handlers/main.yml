@@ -1,0 +1,6 @@
+---
+- name: restart klnagent
+  ansible.builtin.systemd:
+    name: "{{ klnagent_service }}"
+    state: restarted
+    enabled: true

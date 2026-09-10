@@ -1,0 +1,6 @@
+---
+- name: Роль не реализована — используйте hosts/linux-debian/hardening/harden.sh
+  ansible.builtin.fail:
+    msg: >-
+      Роль debian_hardening является заготовкой. Харденинг выполняется
+      сценарием hosts/linux-debian/hardening/harden.sh --apply.

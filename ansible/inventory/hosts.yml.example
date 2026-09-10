@@ -1,0 +1,21 @@
+# Перечень узлов. Адресация статическая: имена и адреса задаются явно,
+# автоматическое обнаружение не применяется — контроль состава сети ручной.
+all:
+  vars:
+    ansible_user: ksc_deploy
+    ansible_ssh_private_key_file: ~/.ssh/ksc_deploy
+    ansible_python_interpreter: /usr/bin/python3
+
+  children:
+    linux_domain:
+      # Узлы Debian, входящие в домен
+      hosts:
+        srv-app-01: { ansible_host: 10.20.30.51 }
+        srv-app-02: { ansible_host: 10.20.30.52 }
+
+    linux_standalone:
+      # Узлы Debian вне домена: требуется пароль защиты Агента от удаления
+      vars:
+        klnagent_uninstall_password: "{{ vault_klnagent_uninstall_password }}"
+      hosts:
+        srv-lab-01: { ansible_host: 10.20.30.101 }
