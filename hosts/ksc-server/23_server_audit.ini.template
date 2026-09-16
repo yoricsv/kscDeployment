@@ -1,0 +1,33 @@
+// Блок конфигурации аудита СУБД (плагин server_audit).
+// Подставляется в my.ini скриптом 25_Enable-DbAudit.ps1 между маркерами
+// KSC-AUDIT BEGIN / KSC-AUDIT END; строки с "//" в файл не переносятся.
+//
+// Плейсинг: отдельная группа [mysqld] допустима — параметры групп объединяются.
+// На Windows плагин поддерживает только вывод в файл (server_audit_output_type=file).
+
+[mysqld]
+# Загрузка плагина при старте службы
+plugin_load_add=server_audit
+
+# FORCE_PLUS_PERMANENT: сервер не стартует без плагина, а выгрузить его
+# командой UNINSTALL PLUGIN нельзя — регистрацию событий невозможно отключить
+# на работающей СУБД.
+server_audit=FORCE_PLUS_PERMANENT
+
+server_audit_logging=ON
+server_audit_output_type=file
+server_audit_file_path={{AUDIT_FILE}}
+server_audit_file_rotate_size={{ROTATE_SIZE}}
+server_audit_file_rotations={{ROTATIONS}}
+
+# Состав событий: контроль сессий + команды + затронутые объекты
+server_audit_events={{EVENTS}}
+
+# Учётные записи, исключённые из регистрации QUERY/TABLE.
+# CONNECT (вход, выход, неуспешная аутентификация) пишется для всех УЗ
+# независимо от этого параметра.
+server_audit_excl_users={{EXCL_USERS}}
+
+# Ограничение длины текста запроса в записи: защищает журнал Windows
+# от записей, превышающих предельный размер сообщения события.
+server_audit_query_log_limit={{QUERY_LOG_LIMIT}}
