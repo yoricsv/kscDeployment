@@ -1,31 +1,36 @@
-﻿<#
+<#
 .SYNOPSIS
-    Доступ MP 10 Collector к журналу аудита СУБД: учётная запись, права, брандмауэр.
+    MP 10 Collector access to the database audit log: account, rights, firewall.
 
 .DESCRIPTION
-    Готовит узел СУБД к удалённому сбору событий коллектором MaxPatrol
-    ($KSC.AuditCollectorHost). По требованиям к источникам Windows коллектору
-    нужна учётная запись ОС, входящая в группу "Читатели журнала событий",
-    с правом сетевого доступа к компьютеру и разрешением на удалённое
-    подключение к WMI; используются TCP 135 и динамические порты RPC.
+    Prepares the database host for remote event collection by the MaxPatrol
+    collector ($KSC.AuditCollectorHost). Windows event sources require an OS
+    account that belongs to the Event Log Readers group, has the right to
+    access the computer from the network and is allowed to connect to WMI
+    remotely; TCP 135 and the dynamic RPC range are used.
 
-    Скрипт:
-      1. Создаёт локальную учётную запись $KSC.AuditAccount (пароль запрашивается)
-         либо обновляет параметры существующей.
-      2. Включает её в группы "Event Log Readers" и "Distributed COM Users".
-      3. Выдаёт право "Доступ к компьютеру из сети" и явно запрещает
-         интерактивный, терминальный, пакетный вход и вход в качестве службы.
-      4. Разрешает чтение журнала $KSC.AuditWinLogName (дескриптор CustomSD)
-         и удалённое подключение к пространству имён WMI root\cimv2.
-      5. Создаёт правила брандмауэра, разрешающие обращения только с адреса
-         коллектора (группа правил "KSC Audit").
+    The script:
+      1. Creates the local account $KSC.AuditAccount (password is prompted for)
+         or updates the settings of an existing one.
+      2. Adds it to the Event Log Readers and Distributed COM Users groups.
+      3. Grants the "Access this computer from the network" right and
+         explicitly denies interactive, remote interactive, batch and service
+         logon.
+      4. Allows reading the $KSC.AuditWinLogName log (CustomSD descriptor) and
+         remote access to the root\cimv2 WMI namespace.
+      5. Creates firewall rules that allow connections from the collector
+         address only (rule group "KSC Audit").
 
-    Учётная запись служебная: интерактивный вход ей запрещён, пароль хранится
-    в парольном хранилище и указывается в MaxPatrol при добавлении учётной записи.
+    The account is a service account: interactive logon is denied, the
+    password is kept in a password vault and entered in MaxPatrol when the
+    account is added.
+
+    KSC data is not affected: the script changes Windows accounts, rights and
+    firewall rules only.
 
 .PARAMETER Rollback
-    Удалить правила брандмауэра группы "KSC Audit" и вывести учётную запись
-    из групп доступа. Сама учётная запись не удаляется.
+    Remove the "KSC Audit" firewall rules and take the account out of the
+    access groups. The account itself is not deleted.
 
 .EXAMPLE
     .\40_Set-AuditCollectorAccess.ps1
@@ -42,13 +47,13 @@ $account = $KSC.AuditAccount
 $collector = $KSC.AuditCollectorHost
 $fwGroup = 'KSC Audit'
 
-# Группы указываются по SID: имена локализованы (Читатели журнала событий и т. п.).
+# Groups are referenced by SID: their names are localized.
 $groupSids = @{
-    'S-1-5-32-573' = 'Event Log Readers (Читатели журнала событий)'
-    'S-1-5-32-562' = 'Distributed COM Users (Пользователи DCOM)'
+    'S-1-5-32-573' = 'Event Log Readers'
+    'S-1-5-32-562' = 'Distributed COM Users'
 }
 
-# ------------------------------------------------------------------ Откат
+# ------------------------------------------------------------------ Rollback
 
 if ($Rollback) {
     Get-NetFirewallRule -Group $fwGroup -ErrorAction SilentlyContinue | Remove-NetFirewallRule
@@ -56,50 +61,51 @@ if ($Rollback) {
         $group = Get-LocalGroup -SID $sid -ErrorAction SilentlyContinue
         if ($group) { Remove-LocalGroupMember -Group $group -Member $account -ErrorAction SilentlyContinue }
     }
-    Write-KscLog "Правила группы '$fwGroup' удалены, учётная запись $account исключена из групп доступа." 'OK'
+    Write-KscLog "Rules of group '$fwGroup' removed, account $account excluded from the access groups." 'OK'
     return
 }
 
-# ------------------------------------------------------------------ 1. Учётная запись
+# ------------------------------------------------------------------ 1. Account
 
 $user = Get-LocalUser -Name $account -ErrorAction SilentlyContinue
 if (-not $user) {
-    $pwdSec = Read-Host "Задайте пароль учётной записи $account (для подключения MP 10 Collector)" -AsSecureString
+    $pwdSec = Read-Host "Set the password for account $account (used by MP 10 Collector)" -AsSecureString
     $user = New-LocalUser -Name $account -Password $pwdSec `
-        -FullName 'MP 10 Collector: чтение журнала аудита СУБД' `
-        -Description 'Служебная УЗ сбора событий ИБ. Интерактивный вход запрещён.' `
+        -FullName 'MP 10 Collector: database audit log reader' `
+        -Description 'Service account for security event collection. Interactive logon denied.' `
         -PasswordNeverExpires -UserMayNotChangePassword
-    Write-KscLog "Создана локальная учётная запись $account." 'OK'
+    Write-KscLog "Local account $account created." 'OK'
 }
 else {
-    Write-KscLog "Учётная запись $account уже существует — параметры будут обновлены." 'WARN'
+    # The password of an existing account is not changed.
+    Write-KscLog "Account $account already exists - its settings will be updated, the password is left unchanged." 'WARN'
     Set-LocalUser -Name $account -PasswordNeverExpires $true -UserMayChangePassword $false
 }
 Enable-LocalUser -Name $account
 $userSid = (Get-LocalUser -Name $account).SID.Value
 
-# ------------------------------------------------------------------ 2. Группы доступа
+# ------------------------------------------------------------------ 2. Access groups
 
 foreach ($sid in $groupSids.Keys) {
     $group = Get-LocalGroup -SID $sid -ErrorAction SilentlyContinue
     if (-not $group) {
-        Write-KscLog "  группа $($groupSids[$sid]) не найдена — пропущена." 'WARN'
+        Write-KscLog "  group $($groupSids[$sid]) not found - skipped." 'WARN'
         continue
     }
     $members = Get-LocalGroupMember -Group $group -ErrorAction SilentlyContinue
     if ($members.SID.Value -contains $userSid) {
-        Write-KscLog "  $account уже состоит в группе $($groupSids[$sid])."
+        Write-KscLog "  $account is already a member of $($groupSids[$sid])."
     }
     else {
         Add-LocalGroupMember -Group $group -Member $account
-        Write-KscLog "  $account добавлена в группу $($groupSids[$sid])." 'OK'
+        Write-KscLog "  $account added to group $($groupSids[$sid])." 'OK'
     }
 }
 
-# ------------------------------------------------------------------ 3. Права входа
+# ------------------------------------------------------------------ 3. Logon rights
 
 function Grant-KscUserRight {
-    <# Приводит состав указанного права к требуемому: добавляет SID, сохраняя остальных. #>
+    <# Adds the SID to the given user right, keeping the existing holders. #>
     param(
         [Parameter(Mandatory)][string]$Right,
         [Parameter(Mandatory)][string]$Sid
@@ -107,13 +113,13 @@ function Grant-KscUserRight {
 
     $exportFile = Join-Path $env:TEMP ('secpol-{0}.inf' -f ([guid]::NewGuid()))
     $importFile = Join-Path $env:TEMP ('secpol-{0}-new.inf' -f ([guid]::NewGuid()))
-    $dbFile = Join-Path $env:TEMP ('secpol-{0}.sdb' -f ([guid]::NewGuid()))
+    $seceditDb = Join-Path $env:TEMP ('secpol-{0}.sdb' -f ([guid]::NewGuid()))
     try {
         secedit /export /areas USER_RIGHTS /cfg $exportFile | Out-Null
         $current = (Select-String -Path $exportFile -Pattern "^$Right\s*=" -ErrorAction SilentlyContinue).Line
         $values = if ($current) { ($current -split '=', 2)[1].Trim() -split ',' | ForEach-Object { $_.Trim() } } else { @() }
         if ($values -contains "*$Sid") {
-            Write-KscLog "  право $Right уже выдано."
+            Write-KscLog "  right $Right is already granted."
             return
         }
         $values = @($values | Where-Object { $_ }) + "*$Sid"
@@ -128,38 +134,39 @@ function Grant-KscUserRight {
             "$Right = $($values -join ',')"
         ) | Set-Content -Path $importFile -Encoding Unicode
 
-        secedit /configure /db $dbFile /cfg $importFile /areas USER_RIGHTS | Out-Null
-        Write-KscLog "  право $Right выдано." 'OK'
+        secedit /configure /db $seceditDb /cfg $importFile /areas USER_RIGHTS | Out-Null
+        Write-KscLog "  right $Right granted." 'OK'
     }
     finally {
-        Remove-Item $exportFile, $importFile, $dbFile -Force -ErrorAction SilentlyContinue
+        # Temporary secedit files only.
+        Remove-Item $exportFile, $importFile, $seceditDb -Force -ErrorAction SilentlyContinue
     }
 }
 
-Write-KscLog '--- Права входа служебной учётной записи ---'
+Write-KscLog '--- Logon rights of the service account ---'
 Grant-KscUserRight -Right 'SeNetworkLogonRight' -Sid $userSid
 foreach ($deny in @('SeDenyInteractiveLogonRight', 'SeDenyRemoteInteractiveLogonRight',
         'SeDenyBatchLogonRight', 'SeDenyServiceLogonRight')) {
     Grant-KscUserRight -Right $deny -Sid $userSid
 }
 
-# ------------------------------------------------------------------ 4. Доступ к журналу и WMI
+# ------------------------------------------------------------------ 4. Event log and WMI access
 
-# Классический журнал: права задаются дескриптором CustomSD.
-# 0x1 — чтение, 0x2 — запись, 0x4 — очистка.
+# Classic log: permissions are defined by the CustomSD descriptor.
+# 0x1 - read, 0x2 - write, 0x4 - clear.
 $logKey = "HKLM:\SYSTEM\CurrentControlSet\Services\EventLog\$($KSC.AuditWinLogName)"
 if (-not (Test-Path $logKey)) {
-    throw "Журнал '$($KSC.AuditWinLogName)' не создан. Сначала выполните 20_Install-AuditForwarder.ps1."
+    throw "Log '$($KSC.AuditWinLogName)' does not exist. Run 20_Install-AuditForwarder.ps1 first."
 }
 $sddl = 'O:BAG:SYD:(A;;0xf0007;;;SY)(A;;0x7;;;BA)(A;;0x1;;;S-1-5-32-573)' + "(A;;0x1;;;$userSid)"
 Set-ItemProperty -Path $logKey -Name 'CustomSD' -Value $sddl
-Write-KscLog "Права на журнал '$($KSC.AuditWinLogName)': чтение — $account и читатели журнала событий." 'OK'
+Write-KscLog "Permissions on log '$($KSC.AuditWinLogName)': read - $account and Event Log Readers." 'OK'
 
-# Удалённый опрос журнала выполняется через WMI: нужны Enable Account,
-# Execute Methods и Remote Enable в пространстве имён root\cimv2.
+# Remote log polling goes through WMI: Enable Account, Execute Methods and
+# Remote Enable are required in the root\cimv2 namespace.
 function Grant-KscWmiAccess {
-    # Дескриптор безопасности пространства имён изменяется методами класса
-    # __systemsecurity: командлеты CIM не дают эквивалентного доступа к нему.
+    # The namespace security descriptor is changed through the methods of the
+    # __systemsecurity class: CIM cmdlets provide no equivalent access.
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingWMICmdlet', '')]
     param([string]$Namespace = 'root/cimv2', [Parameter(Mandatory)][string]$Sid)
 
@@ -169,11 +176,11 @@ function Grant-KscWmiAccess {
     $containerInherit = 0x2
 
     $sd = Invoke-WmiMethod -Namespace $Namespace -Path '__systemsecurity=@' -Name GetSecurityDescriptor
-    if ($sd.ReturnValue -ne 0) { throw "Не удалось прочитать дескриптор безопасности WMI (код $($sd.ReturnValue))." }
+    if ($sd.ReturnValue -ne 0) { throw "Failed to read the WMI security descriptor (code $($sd.ReturnValue))." }
 
     $descriptor = $sd.Descriptor
     if ($descriptor.DACL.Trustee.SIDString -contains $Sid) {
-        Write-KscLog "  доступ к WMI $Namespace уже выдан."
+        Write-KscLog "  WMI access to $Namespace is already granted."
         return
     }
 
@@ -187,44 +194,44 @@ function Grant-KscWmiAccess {
 
     $descriptor.DACL += $ace
     $result = Invoke-WmiMethod -Namespace $Namespace -Path '__systemsecurity=@' -Name SetSecurityDescriptor -ArgumentList $descriptor
-    if ($result.ReturnValue -ne 0) { throw "Не удалось применить дескриптор безопасности WMI (код $($result.ReturnValue))." }
-    Write-KscLog "  доступ к WMI $Namespace выдан (Enable, Method Execute, Remote Enable)." 'OK'
+    if ($result.ReturnValue -ne 0) { throw "Failed to apply the WMI security descriptor (code $($result.ReturnValue))." }
+    Write-KscLog "  WMI access to $Namespace granted (Enable, Method Execute, Remote Enable)." 'OK'
 }
 
-Write-KscLog '--- Доступ к WMI ---'
+Write-KscLog '--- WMI access ---'
 Grant-KscWmiAccess -Sid $userSid
 
-# ------------------------------------------------------------------ 5. Брандмауэр
+# ------------------------------------------------------------------ 5. Firewall
 
-Write-KscLog '--- Правила брандмауэра для коллектора ---'
+Write-KscLog '--- Firewall rules for the collector ---'
 Get-NetFirewallRule -Group $fwGroup -ErrorAction SilentlyContinue | Remove-NetFirewallRule
 
 New-NetFirewallRule -DisplayName 'KSC Audit: RPC endpoint mapper 135 (MP 10 Collector)' -Group $fwGroup `
     -Direction Inbound -Action Allow -Protocol TCP -LocalPort 135 -RemoteAddress $collector -Profile Any `
-    -Description 'Сопоставитель конечных точек RPC для удалённого чтения журнала событий' | Out-Null
+    -Description 'RPC endpoint mapper for remote event log reading' | Out-Null
 Write-KscLog "  + TCP 135 <- $collector"
 
-New-NetFirewallRule -DisplayName 'KSC Audit: динамические порты RPC (MP 10 Collector)' -Group $fwGroup `
+New-NetFirewallRule -DisplayName 'KSC Audit: dynamic RPC ports (MP 10 Collector)' -Group $fwGroup `
     -Direction Inbound -Action Allow -Protocol TCP -LocalPort 49152-65535 -RemoteAddress $collector -Profile Any `
-    -Description 'Динамический диапазон RPC/DCOM для WMI' | Out-Null
+    -Description 'Dynamic RPC/DCOM range for WMI' | Out-Null
 Write-KscLog "  + TCP 49152-65535 <- $collector"
 
-# Адрес коллектора должен присутствовать и в общем списке смежных СЗИ
+# The collector address must also be present in the common list of security tools
 if ($KSC.SecurityToolsHosts -notcontains $collector) {
-    Write-KscLog "Добавьте $collector в SecurityToolsHosts (common/config.ps1) и перезапустите 10_Set-Firewall.ps1: иначе правила управления будут расходиться." 'WARN'
+    Write-KscLog "Add $collector to SecurityToolsHosts (common/config.ps1) and re-run 10_Set-Firewall.ps1, otherwise the management rules will diverge." 'WARN'
 }
 
-# ------------------------------------------------------------------ Итог
+# ------------------------------------------------------------------ Summary
 
 Write-Host ''
-Write-Host '============ ПАРАМЕТРЫ ДЛЯ НАСТРОЙКИ ИСТОЧНИКА В MaxPatrol ============' -ForegroundColor Cyan
-Write-Host "  Узел источника (актив):     $($KSC.AuditDbHost)" -ForegroundColor Gray
-Write-Host "  Учётная запись ОС:          $env:COMPUTERNAME\$account (локальная)" -ForegroundColor Gray
-Write-Host "  Журнал событий:             $($KSC.AuditWinLogName)" -ForegroundColor Gray
-Write-Host "  Источник событий:           $($KSC.AuditWinLogSource)" -ForegroundColor Gray
-Write-Host "  Коллектор:                  $collector" -ForegroundColor Gray
-Write-Host "  Порты:                      TCP 135 + 49152-65535" -ForegroundColor Gray
-Write-Host '=======================================================================' -ForegroundColor Cyan
+Write-Host '============ SOURCE PARAMETERS FOR MaxPatrol ============' -ForegroundColor Cyan
+Write-Host "  Source host (asset):    $($KSC.AuditDbHost)" -ForegroundColor Gray
+Write-Host "  OS account:             $env:COMPUTERNAME\$account (local)" -ForegroundColor Gray
+Write-Host "  Event log:              $($KSC.AuditWinLogName)" -ForegroundColor Gray
+Write-Host "  Event source:           $($KSC.AuditWinLogSource)" -ForegroundColor Gray
+Write-Host "  Collector:              $collector" -ForegroundColor Gray
+Write-Host "  Ports:                  TCP 135 + 49152-65535" -ForegroundColor Gray
+Write-Host '=========================================================' -ForegroundColor Cyan
 
-Write-KscLog 'Пароль учётной записи сохраните в парольном хранилище: он потребуется при добавлении учётной записи в MaxPatrol.' 'WARN'
-Write-KscLog '=== Доступ коллектора настроен. Следующий шаг: 90_Test-Audit.ps1 ===' 'OK'
+Write-KscLog 'Store the account password in a password vault: it is required when adding the account in MaxPatrol.' 'WARN'
+Write-KscLog '=== Collector access configured. Next step: 90_Test-Audit.ps1 ===' 'OK'

@@ -1,35 +1,36 @@
-﻿<#
+<#
 .SYNOPSIS
-    Аудит прикладного ПО: Kaspersky Security Center и Агент администрирования.
+    Application audit: Kaspersky Security Center and Network Agent.
 
 .DESCRIPTION
-    Приказ ОАЦ № 130 требует регистрировать действия администраторов средств
-    защиты информации. Для KSC это два независимых потока:
+    Order No. 130 of the OAC requires logging the actions of security tool
+    administrators. For KSC there are two independent streams:
 
-      * события самого Сервера администрирования (вход в консоль, изменение
-        политик, задач, прав, лицензии) — хранятся в базе KSC и выгружаются
-        либо экспортом в SIEM по Syslog/CEF, либо записью в журнал Windows;
-      * события защиты с управляемых устройств — приходят от Агентов
-        и попадают в ту же базу.
+      * events of the Administration Server itself (console logon, changes to
+        policies, tasks, rights, licence) - stored in the KSC database and
+        exported either to a SIEM over Syslog/CEF or to the Windows event log;
+      * protection events from managed devices - delivered by Network Agents
+        into the same database.
 
-    Сценарий выполняет то, что задаётся на стороне ОС, и проверяет остальное:
+    The script performs what is configured on the OS side and verifies the rest:
 
-      1. Определяет каталог установки Сервера и состав служб Kaspersky.
-      2. Включает и задаёт размер журналов Windows, в которые пишет ПО
-         Kaspersky ("Kaspersky Event Log", Application).
-      3. Выдаёт учётной записи сбора (kscaudit) право чтения этих журналов.
-      4. Включает аудит доступа (SACL) к каталогу установки и общей папке,
-         если он ещё не задан сценарием 00_Set-OsAudit.ps1.
-      5. Печатает чек-лист параметров, которые задаются только в консоли
-         (экспорт в SIEM, сроки хранения, роль аудитора), с подставленными
-         значениями площадки.
+      1. Detects the Administration Server installation directory and the
+         Kaspersky services.
+      2. Enables and sizes the Windows event logs used by Kaspersky software
+         ("Kaspersky Event Log", Application).
+      3. Grants the collector account (kscaudit) read access to those logs.
+      4. Enables access auditing (SACL) for the installation directory and the
+         shared folder if it has not been set by 00_Set-OsAudit.ps1.
+      5. Prints a checklist of the settings that can only be made in the
+         console (SIEM export, retention, auditor role) with the site values
+         substituted.
 
-    Параметры экспорта в SIEM берутся из common/config.ps1:
-    SiemHost/SiemPort/SiemProtocol/SiemFormat, при пустом SiemHost
-    используется адрес коллектора аудита.
+    SIEM export parameters are taken from common/config.ps1
+    (SiemHost/SiemPort/SiemProtocol/SiemFormat); when SiemHost is empty the
+    audit collector address is used.
 
 .PARAMETER SkipSacl
-    Не изменять аудит доступа к каталогам KSC.
+    Do not change access auditing for the KSC directories.
 
 .EXAMPLE
     .\30_Set-KscAppAudit.ps1 -WhatIf
@@ -42,17 +43,17 @@ $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\..\..\..\common\config.ps1"
 Assert-Elevated
 
-Write-KscLog '=== Аудит прикладного ПО (Kaspersky Security Center) ==='
+Write-KscLog '=== Application audit (Kaspersky Security Center) ==='
 
-# ------------------------------------------------------------------ 1. Состав ПО
+# ------------------------------------------------------------------ 1. Installed software
 
 $services = Get-Service | Where-Object { $_.Name -match '^kl' -or $_.Name -match 'KSCWebConsole' }
 if (-not $services) {
-    Write-KscLog 'Службы Kaspersky не найдены: сценарий предназначен для узла Сервера администрирования.' 'WARN'
+    Write-KscLog 'Kaspersky services not found: this script is intended for the Administration Server host.' 'WARN'
 }
 else {
     foreach ($s in $services) {
-        Write-KscLog ('  служба {0,-28} {1}' -f $s.Name, $s.Status) $(if ($s.Status -eq 'Running') { 'OK' } else { 'WARN' })
+        Write-KscLog ('  service {0,-28} {1}' -f $s.Name, $s.Status) $(if ($s.Status -eq 'Running') { 'OK' } else { 'WARN' })
     }
 }
 
@@ -62,76 +63,77 @@ if ($srvService -and $srvService.PathName) {
     $exe = ($srvService.PathName -replace '^"([^"]+)".*$', '$1') -replace '^(\S+).*$', '$1'
     if (Test-Path $exe) { $installDir = Split-Path (Split-Path $exe -Parent) -Parent }
 }
-if ($installDir) { Write-KscLog "Каталог установки Сервера: $installDir" 'OK' }
-else { Write-KscLog 'Каталог установки Сервера определить не удалось (служба klserver не найдена).' 'WARN' }
+if ($installDir) { Write-KscLog "Administration Server installation directory: $installDir" 'OK' }
+else { Write-KscLog 'Could not determine the Administration Server directory (service klserver not found).' 'WARN' }
 
-# ------------------------------------------------------------------ 2. Журналы Windows для событий Kaspersky
+# ------------------------------------------------------------------ 2. Windows logs used by Kaspersky software
 
-Write-KscLog '--- Журналы Windows, используемые ПО Kaspersky ---'
+Write-KscLog '--- Windows logs used by Kaspersky software ---'
 
-# "Kaspersky Event Log" создаётся при включении записи событий в журнал
-# Windows в политике Агента/KES; до этого канал отсутствует.
+# "Kaspersky Event Log" is created when writing events to the Windows event
+# log is enabled in the Network Agent/KES policy; before that the channel
+# does not exist.
 $kasperskyLogs = @('Kaspersky Event Log', 'Application')
 $presentLogs = @()
 foreach ($name in $kasperskyLogs) {
     $log = Get-WinEvent -ListLog $name -ErrorAction SilentlyContinue
     if (-not $log) {
-        Write-KscLog "  ! журнал '$name' отсутствует: включите запись событий в журнал Windows в политике (см. чек-лист)." 'WARN'
+        Write-KscLog "  ! log '$name' is absent: enable writing events to the Windows event log in the policy (see checklist)." 'WARN'
         continue
     }
     $presentLogs += $name
-    if (-not $PSCmdlet.ShouldProcess("Журнал $name", "Размер $($KSC.AuditChannelSizeMb) МБ")) { continue }
+    if (-not $PSCmdlet.ShouldProcess("Log $name", "Size $($KSC.AuditChannelSizeMb) MB")) { continue }
     $sizeBytes = $KSC.AuditChannelSizeMb * 1MB
     $out = & wevtutil.exe sl "$name" /e:true /ms:$sizeBytes /rt:false 2>&1
-    if ($LASTEXITCODE -eq 0) { Write-KscLog "  + $name : $($KSC.AuditChannelSizeMb) МБ, перезапись по мере заполнения" 'OK' }
-    else { Write-KscLog "  ! не удалось изменить '$name': $out" 'WARN' }
+    if ($LASTEXITCODE -eq 0) { Write-KscLog "  + $name : $($KSC.AuditChannelSizeMb) MB, overwrite as needed" 'OK' }
+    else { Write-KscLog "  ! failed to change '$name': $out" 'WARN' }
 }
 
-# ------------------------------------------------------------------ 3. Доступ учётной записи сбора
+# ------------------------------------------------------------------ 3. Collector account access
 
-Write-KscLog '--- Доступ учётной записи сбора к журналам ПО ---'
+Write-KscLog '--- Collector account access to the application logs ---'
 
 $collectorUser = Get-LocalUser -Name $KSC.AuditAccount -ErrorAction SilentlyContinue
 if (-not $collectorUser) {
-    Write-KscLog "Учётная запись $($KSC.AuditAccount) не создана: выполните 40_Set-AuditCollectorAccess.ps1." 'WARN'
+    Write-KscLog "Account $($KSC.AuditAccount) does not exist: run 40_Set-AuditCollectorAccess.ps1." 'WARN'
 }
 else {
-    # Членство в группе "Читатели журнала событий" (S-1-5-32-573) даёт чтение
-    # стандартных каналов; для классических журналов с собственным дескриптором
-    # право выдаётся явно через CustomSD.
+    # Membership in Event Log Readers (S-1-5-32-573) grants read access to the
+    # modern channels; for classic logs with their own descriptor the right is
+    # granted explicitly through CustomSD.
     foreach ($name in $presentLogs) {
         $key = "HKLM:\SYSTEM\CurrentControlSet\Services\EventLog\$name"
         if (-not (Test-Path $key)) {
-            Write-KscLog "  = $name : современный канал, доступ обеспечивается членством в группе читателей журнала."
+            Write-KscLog "  = $name : modern channel, access is granted by Event Log Readers membership."
             continue
         }
         $sddl = (Get-ItemProperty -Path $key -Name CustomSD -ErrorAction SilentlyContinue).CustomSD
         $ace = "(A;;0x1;;;$($collectorUser.SID.Value))"
         if ($sddl -and $sddl.Contains($collectorUser.SID.Value)) {
-            Write-KscLog "  = $name : право чтения уже выдано."
+            Write-KscLog "  = $name : read access already granted."
             continue
         }
         $newSddl = if ($sddl) { $sddl + $ace } else { 'O:BAG:SYD:(A;;0xf0007;;;SY)(A;;0x7;;;BA)(A;;0x1;;;ER)' + $ace }
-        if ($PSCmdlet.ShouldProcess($name, 'Выдать право чтения учётной записи сбора')) {
+        if ($PSCmdlet.ShouldProcess($name, 'Grant read access to the collector account')) {
             New-ItemProperty -Path $key -Name CustomSD -Value $newSddl -PropertyType String -Force | Out-Null
-            Write-KscLog "  + $name : чтение разрешено $($KSC.AuditAccount)" 'OK'
+            Write-KscLog "  + $name : read access granted to $($KSC.AuditAccount)" 'OK'
         }
     }
 }
 
-# ------------------------------------------------------------------ 4. Аудит доступа к каталогам KSC
+# ------------------------------------------------------------------ 4. Access auditing for KSC directories
 
 if (-not $SkipSacl) {
-    Write-KscLog '--- Аудит доступа к файлам KSC ---'
+    Write-KscLog '--- Access auditing for KSC files ---'
     $paths = @($installDir, $KSC.KlShareDir, $KSC.BackupDir) | Where-Object { $_ -and (Test-Path $_) }
     $rights = [Security.AccessControl.FileSystemRights]'WriteData, AppendData, Delete, DeleteSubdirectoriesAndFiles, ChangePermissions, TakeOwnership'
 
     foreach ($path in $paths) {
-        if (-not $PSCmdlet.ShouldProcess($path, 'Включить аудит изменений')) { continue }
+        if (-not $PSCmdlet.ShouldProcess($path, 'Enable change auditing')) { continue }
         try {
             $acl = Get-Acl -Path $path -Audit
-            $exists = $acl.Audit | Where-Object { $_.IdentityReference -match 'Everyone|Все' }
-            if ($exists) { Write-KscLog "  = $path : аудит уже задан."; continue }
+            $exists = $acl.Audit | Where-Object { $_.IdentityReference -match 'Everyone' }
+            if ($exists) { Write-KscLog "  = $path : auditing already configured."; continue }
             $acl.AddAuditRule((New-Object Security.AccessControl.FileSystemAuditRule(
                 'Everyone', $rights, 'ContainerInherit,ObjectInherit', 'None', 'Success,Failure')))
             Set-Acl -Path $path -AclObject $acl
@@ -143,37 +145,37 @@ if (-not $SkipSacl) {
     }
 }
 
-# ------------------------------------------------------------------ 5. Чек-лист консоли
+# ------------------------------------------------------------------ 5. Console checklist
 
 $siemHost = if ($KSC.SiemHost) { $KSC.SiemHost } else { $KSC.AuditCollectorHost }
 
-Write-KscLog '--- Задаётся только в консоли администрирования ---'
+Write-KscLog '--- Configured in the administration console only ---'
 $checklist = @(
-    @{ Title = 'Экспорт событий в SIEM (основной канал доставки событий KSC)'
+    @{ Title = 'Event export to SIEM (main delivery channel for KSC events)'
        Steps = @(
-         'Консоль -> Свойства Сервера администрирования -> Экспорт событий -> Настроить экспорт в SIEM-систему.'
-         "Адрес SIEM-системы: $siemHost, порт: $($KSC.SiemPort), протокол: $($KSC.SiemProtocol)."
-         "Формат: $($KSC.SiemFormat)."
-         'Отметить типы событий для экспорта: аудит действий администраторов, состояние защиты, обнаружения, состояние устройств.'
-         'После включения проверить приём событий на коллекторе.'
+         'Console -> Administration Server properties -> Event export -> Configure export to SIEM system.'
+         "SIEM system address: $siemHost, port: $($KSC.SiemPort), protocol: $($KSC.SiemProtocol)."
+         "Format: $($KSC.SiemFormat)."
+         'Select the event types to export: administrator action audit, protection status, detections, device status.'
+         'After enabling, verify that events arrive at the collector.'
        ) }
-    @{ Title = 'Запись событий в журнал событий Windows (резервный канал)'
+    @{ Title = 'Writing events to the Windows event log (fallback channel)'
        Steps = @(
-         'Политика Агента администрирования -> Настройка событий: для отобранных типов включить "Записывать в журнал событий Windows".'
-         'То же — в политике Kaspersky Endpoint Security для событий критической важности.'
-         "После применения политики появится журнал 'Kaspersky Event Log'; повторно выполнить этот сценарий для выдачи прав $($KSC.AuditAccount)."
+         'Network Agent policy -> Event configuration: enable "Store in the Windows event log" for the selected event types.'
+         'Do the same in the Kaspersky Endpoint Security policy for critical events.'
+         "Once the policy is applied the 'Kaspersky Event Log' appears; re-run this script to grant access to $($KSC.AuditAccount)."
        ) }
-    @{ Title = 'Хранение событий в базе KSC'
+    @{ Title = 'Event storage in the KSC database'
        Steps = @(
-         'Свойства Сервера администрирования -> Хранилище событий.'
-         "Срок хранения: $($KSC.RetentionDays) дней; предельное число записей: $($KSC.EventsLimit)."
-         'Проверить, что объём базы укладывается в выделенный том.'
+         'Administration Server properties -> Event repository.'
+         "Retention period: $($KSC.RetentionDays) days; maximum number of records: $($KSC.EventsLimit)."
+         'Check that the database size fits into the allocated volume.'
        ) }
-    @{ Title = 'Регистрация действий администраторов KSC'
+    @{ Title = 'Logging of KSC administrator actions'
        Steps = @(
-         'Свойства Сервера администрирования -> Настройка событий -> категория "Аудит": включить регистрацию всех событий категории.'
-         'Проверить, что события "Изменён объект", "Изменено состояние объекта", "Вход пользователя" включены и экспортируются.'
-         "Роль только для чтения (группа $($KSC.AuditorsGroup)) — для лиц, контролирующих аудит; администраторы не должны иметь права очистки журналов."
+         'Administration Server properties -> Event configuration -> "Audit" category: enable logging of all events in the category.'
+         'Check that "Object modified", "Object status changed" and "User logged in" are enabled and exported.'
+         "Read-only role (group $($KSC.AuditorsGroup)) - for the staff controlling the audit; administrators must not be allowed to clear the logs."
        ) }
 )
 
@@ -186,4 +188,4 @@ foreach ($item in $checklist) {
 }
 
 Write-Host ''
-Write-KscLog '=== Аудит ПО настроен в части ОС. Выполните пункты чек-листа, затем 90_Test-Audit.ps1 ===' 'OK'
+Write-KscLog '=== Application audit configured on the OS side. Complete the checklist, then run 90_Test-Audit.ps1 ===' 'OK'

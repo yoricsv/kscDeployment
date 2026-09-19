@@ -1,34 +1,35 @@
-﻿<#
+<#
 .SYNOPSIS
-    Расширенный аудит операционной системы на узле KSC (Windows Server 2022).
+    Extended operating system audit on the KSC host (Windows Server 2022).
 
 .DESCRIPTION
-    Приказ ОАЦ № 130 задаёт минимальный перечень регистрируемых событий.
-    Сценарий включает этот минимум и расширяет его составом, который нужен
-    для реагирования на инциденты и их расследования:
+    Order No. 130 of the OAC defines the minimum set of events to be logged.
+    This script enables that minimum and extends it with the events required
+    for incident response and investigation:
 
-      1. Подкатегории расширенной политики аудита задаются по GUID, а не по
-         названию: названия подкатегорий локализованы, и вызов auditpol с
-         английским именем на русской сборке Windows завершается ошибкой.
-      2. Командная строка в событиях создания процессов (4688), приоритет
-         расширенной политики над устаревшей.
-      3. Журналирование PowerShell: блоки сценариев, модули и транскрипция
-         в защищённый каталог.
-      4. Размеры и режим перезаписи журналов Security/System/Application
-         и включение дополнительных каналов (PowerShell, планировщик, WinRM,
-         брандмауэр, RDP, SMB, Defender).
-      5. Аудит доступа (SACL) к каталогам KSC, СУБД и резервных копий:
-         изменение и удаление файлов, смена прав, попытки отказа.
-      6. Аудит изменений ветки реестра KasperskyLab.
+      1. Advanced audit policy subcategories are set by GUID, not by name:
+         subcategory names are localized, and calling auditpol with an English
+         name on a localized Windows build fails.
+      2. Command line in process creation events (4688); advanced audit policy
+         takes precedence over the legacy one.
+      3. PowerShell logging: script blocks, modules and transcription into a
+         protected directory.
+      4. Size and retention mode of the Security/System/Application logs and
+         activation of additional channels (PowerShell, Task Scheduler, WinRM,
+         Firewall, RDP, SMB, Defender).
+      5. Access auditing (SACL) for the KSC, DBMS and backup directories:
+         modification and deletion of files, permission changes, denied attempts.
+      6. Auditing of changes in the KasperskyLab registry branch.
 
-    Локальные параметры перекрываются доменной групповой политикой: если узел
-    входит в домен, тот же состав следует задать в GPO, иначе значения
-    вернутся к прежним при очередном обновлении политики.
+    Local settings are overridden by domain group policy: if the host is a
+    domain member, the same set must be defined in a GPO, otherwise the values
+    are reverted at the next policy refresh.
 
-    Сценарий поддерживает -WhatIf: выполните пробный прогон до применения.
+    The script supports -WhatIf: run a trial pass before applying.
 
 .PARAMETER SkipSacl
-    Не изменять аудит доступа к каталогам и реестру (только политика и журналы).
+    Do not change access auditing for directories and registry (policy and
+    event logs only).
 
 .EXAMPLE
     .\00_Set-OsAudit.ps1 -WhatIf
@@ -41,109 +42,109 @@ $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\..\..\..\common\config.ps1"
 Assert-Elevated
 
-Write-KscLog '=== Расширенный аудит операционной системы ==='
+Write-KscLog '=== Extended operating system audit ==='
 
-# ------------------------------------------------------------------ 1. Подкатегории аудита
+# ------------------------------------------------------------------ 1. Audit subcategories
 
-# GUID подкатегорий не зависят от языка системы (docs.microsoft.com,
-# "Advanced security audit policy settings"). Значение: S — успех, F — отказ.
+# Subcategory GUIDs do not depend on the system language (docs.microsoft.com,
+# "Advanced security audit policy settings"). S - success, F - failure.
 $subcategories = @(
-    # Вход в систему и сессии (Приказ № 130, контроль сессий)
-    @{ Guid = '{0CCE9215-69AE-11D9-BED3-505054503030}'; Name = 'Вход в систему';                      S = $true; F = $true }
-    @{ Guid = '{0CCE9216-69AE-11D9-BED3-505054503030}'; Name = 'Выход из системы';                    S = $true; F = $false }
-    @{ Guid = '{0CCE9217-69AE-11D9-BED3-505054503030}'; Name = 'Блокировка учётной записи';           S = $true; F = $true }
-    @{ Guid = '{0CCE921B-69AE-11D9-BED3-505054503030}'; Name = 'Особый вход (привилегии)';            S = $true; F = $false }
-    @{ Guid = '{0CCE921C-69AE-11D9-BED3-505054503030}'; Name = 'Прочие события входа/выхода (RDP)';   S = $true; F = $true }
-    @{ Guid = '{0CCE9249-69AE-11D9-BED3-505054503030}'; Name = 'Членство в группах при входе';        S = $true; F = $false }
+    # Logon and sessions (Order No. 130, session control)
+    @{ Guid = '{0CCE9215-69AE-11D9-BED3-505054503030}'; Name = 'Logon';                              S = $true; F = $true }
+    @{ Guid = '{0CCE9216-69AE-11D9-BED3-505054503030}'; Name = 'Logoff';                             S = $true; F = $false }
+    @{ Guid = '{0CCE9217-69AE-11D9-BED3-505054503030}'; Name = 'Account Lockout';                    S = $true; F = $true }
+    @{ Guid = '{0CCE921B-69AE-11D9-BED3-505054503030}'; Name = 'Special Logon (privileges)';         S = $true; F = $false }
+    @{ Guid = '{0CCE921C-69AE-11D9-BED3-505054503030}'; Name = 'Other Logon/Logoff Events (RDP)';    S = $true; F = $true }
+    @{ Guid = '{0CCE9249-69AE-11D9-BED3-505054503030}'; Name = 'Group Membership';                   S = $true; F = $false }
 
-    # Проверка учётных данных
-    @{ Guid = '{0CCE923F-69AE-11D9-BED3-505054503030}'; Name = 'Проверка учётных данных';             S = $true; F = $true }
-    @{ Guid = '{0CCE9242-69AE-11D9-BED3-505054503030}'; Name = 'Служба проверки подлинности Kerberos'; S = $true; F = $true }
-    @{ Guid = '{0CCE9240-69AE-11D9-BED3-505054503030}'; Name = 'Операции с билетами Kerberos';        S = $true; F = $true }
-    @{ Guid = '{0CCE9241-69AE-11D9-BED3-505054503030}'; Name = 'Прочие события входа учётных записей'; S = $true; F = $true }
+    # Credential validation
+    @{ Guid = '{0CCE923F-69AE-11D9-BED3-505054503030}'; Name = 'Credential Validation';              S = $true; F = $true }
+    @{ Guid = '{0CCE9242-69AE-11D9-BED3-505054503030}'; Name = 'Kerberos Authentication Service';    S = $true; F = $true }
+    @{ Guid = '{0CCE9240-69AE-11D9-BED3-505054503030}'; Name = 'Kerberos Service Ticket Operations'; S = $true; F = $true }
+    @{ Guid = '{0CCE9241-69AE-11D9-BED3-505054503030}'; Name = 'Other Account Logon Events';         S = $true; F = $true }
 
-    # Управление учётными записями и полномочиями
-    @{ Guid = '{0CCE9235-69AE-11D9-BED3-505054503030}'; Name = 'Управление учётными записями';        S = $true; F = $true }
-    @{ Guid = '{0CCE9236-69AE-11D9-BED3-505054503030}'; Name = 'Управление учётными записями компьютеров'; S = $true; F = $true }
-    @{ Guid = '{0CCE9237-69AE-11D9-BED3-505054503030}'; Name = 'Управление группами безопасности';    S = $true; F = $true }
-    @{ Guid = '{0CCE9239-69AE-11D9-BED3-505054503030}'; Name = 'Управление группами приложений';      S = $true; F = $true }
-    @{ Guid = '{0CCE923A-69AE-11D9-BED3-505054503030}'; Name = 'Прочие события управления УЗ';        S = $true; F = $true }
+    # Account and privilege management
+    @{ Guid = '{0CCE9235-69AE-11D9-BED3-505054503030}'; Name = 'User Account Management';            S = $true; F = $true }
+    @{ Guid = '{0CCE9236-69AE-11D9-BED3-505054503030}'; Name = 'Computer Account Management';        S = $true; F = $true }
+    @{ Guid = '{0CCE9237-69AE-11D9-BED3-505054503030}'; Name = 'Security Group Management';          S = $true; F = $true }
+    @{ Guid = '{0CCE9239-69AE-11D9-BED3-505054503030}'; Name = 'Application Group Management';       S = $true; F = $true }
+    @{ Guid = '{0CCE923A-69AE-11D9-BED3-505054503030}'; Name = 'Other Account Management Events';    S = $true; F = $true }
 
-    # Использование прав
-    @{ Guid = '{0CCE9228-69AE-11D9-BED3-505054503030}'; Name = 'Использование особых прав';           S = $true; F = $true }
-    @{ Guid = '{0CCE922A-69AE-11D9-BED3-505054503030}'; Name = 'Прочие события использования прав';   S = $false; F = $true }
-    @{ Guid = '{0CCE924A-69AE-11D9-BED3-505054503030}'; Name = 'Изменение прав маркера доступа';      S = $true; F = $false }
+    # Privilege use
+    @{ Guid = '{0CCE9228-69AE-11D9-BED3-505054503030}'; Name = 'Sensitive Privilege Use';            S = $true; F = $true }
+    @{ Guid = '{0CCE922A-69AE-11D9-BED3-505054503030}'; Name = 'Other Privilege Use Events';         S = $false; F = $true }
+    @{ Guid = '{0CCE924A-69AE-11D9-BED3-505054503030}'; Name = 'Token Right Adjusted';               S = $true; F = $false }
 
-    # Процессы (расследование инцидентов)
-    @{ Guid = '{0CCE922B-69AE-11D9-BED3-505054503030}'; Name = 'Создание процесса';                   S = $true; F = $true }
-    @{ Guid = '{0CCE922C-69AE-11D9-BED3-505054503030}'; Name = 'Завершение процесса';                 S = $true; F = $false }
-    @{ Guid = '{0CCE9248-69AE-11D9-BED3-505054503030}'; Name = 'Подключение устройств (PnP)';         S = $true; F = $false }
-    @{ Guid = '{0CCE922E-69AE-11D9-BED3-505054503030}'; Name = 'События RPC';                         S = $false; F = $true }
+    # Processes (incident investigation)
+    @{ Guid = '{0CCE922B-69AE-11D9-BED3-505054503030}'; Name = 'Process Creation';                   S = $true; F = $true }
+    @{ Guid = '{0CCE922C-69AE-11D9-BED3-505054503030}'; Name = 'Process Termination';                S = $true; F = $false }
+    @{ Guid = '{0CCE9248-69AE-11D9-BED3-505054503030}'; Name = 'Plug and Play Events';               S = $true; F = $false }
+    @{ Guid = '{0CCE922E-69AE-11D9-BED3-505054503030}'; Name = 'RPC Events';                         S = $false; F = $true }
 
-    # Доступ к объектам
-    @{ Guid = '{0CCE921D-69AE-11D9-BED3-505054503030}'; Name = 'Файловая система (по SACL)';          S = $true; F = $true }
-    @{ Guid = '{0CCE921E-69AE-11D9-BED3-505054503030}'; Name = 'Реестр (по SACL)';                    S = $true; F = $true }
-    @{ Guid = '{0CCE9220-69AE-11D9-BED3-505054503030}'; Name = 'Доступ к SAM';                        S = $false; F = $true }
-    @{ Guid = '{0CCE9224-69AE-11D9-BED3-505054503030}'; Name = 'Общие папки';                         S = $true; F = $true }
-    @{ Guid = '{0CCE9244-69AE-11D9-BED3-505054503030}'; Name = 'Подробный аудит общих папок';         S = $false; F = $true }
-    @{ Guid = '{0CCE9245-69AE-11D9-BED3-505054503030}'; Name = 'Съёмные носители';                    S = $true; F = $true }
-    @{ Guid = '{0CCE9222-69AE-11D9-BED3-505054503030}'; Name = 'События приложений (KSC)';            S = $true; F = $true }
-    @{ Guid = '{0CCE9223-69AE-11D9-BED3-505054503030}'; Name = 'Работа с дескрипторами';              S = $false; F = $true }
-    @{ Guid = '{0CCE9227-69AE-11D9-BED3-505054503030}'; Name = 'Прочие события доступа к объектам';   S = $true; F = $true }
+    # Object access
+    @{ Guid = '{0CCE921D-69AE-11D9-BED3-505054503030}'; Name = 'File System (by SACL)';              S = $true; F = $true }
+    @{ Guid = '{0CCE921E-69AE-11D9-BED3-505054503030}'; Name = 'Registry (by SACL)';                 S = $true; F = $true }
+    @{ Guid = '{0CCE9220-69AE-11D9-BED3-505054503030}'; Name = 'SAM Access';                         S = $false; F = $true }
+    @{ Guid = '{0CCE9224-69AE-11D9-BED3-505054503030}'; Name = 'File Share';                         S = $true; F = $true }
+    @{ Guid = '{0CCE9244-69AE-11D9-BED3-505054503030}'; Name = 'Detailed File Share';                S = $false; F = $true }
+    @{ Guid = '{0CCE9245-69AE-11D9-BED3-505054503030}'; Name = 'Removable Storage';                  S = $true; F = $true }
+    @{ Guid = '{0CCE9222-69AE-11D9-BED3-505054503030}'; Name = 'Application Generated (KSC)';        S = $true; F = $true }
+    @{ Guid = '{0CCE9223-69AE-11D9-BED3-505054503030}'; Name = 'Handle Manipulation';                S = $false; F = $true }
+    @{ Guid = '{0CCE9227-69AE-11D9-BED3-505054503030}'; Name = 'Other Object Access Events';         S = $true; F = $true }
 
-    # Изменение политик
-    @{ Guid = '{0CCE922F-69AE-11D9-BED3-505054503030}'; Name = 'Изменение политики аудита';           S = $true; F = $true }
-    @{ Guid = '{0CCE9230-69AE-11D9-BED3-505054503030}'; Name = 'Изменение политики проверки подлинности'; S = $true; F = $true }
-    @{ Guid = '{0CCE9231-69AE-11D9-BED3-505054503030}'; Name = 'Изменение политики авторизации';      S = $true; F = $true }
-    @{ Guid = '{0CCE9232-69AE-11D9-BED3-505054503030}'; Name = 'Изменение правил брандмауэра';        S = $true; F = $true }
-    @{ Guid = '{0CCE9234-69AE-11D9-BED3-505054503030}'; Name = 'Прочие изменения политик';            S = $false; F = $true }
+    # Policy change
+    @{ Guid = '{0CCE922F-69AE-11D9-BED3-505054503030}'; Name = 'Audit Policy Change';                S = $true; F = $true }
+    @{ Guid = '{0CCE9230-69AE-11D9-BED3-505054503030}'; Name = 'Authentication Policy Change';       S = $true; F = $true }
+    @{ Guid = '{0CCE9231-69AE-11D9-BED3-505054503030}'; Name = 'Authorization Policy Change';        S = $true; F = $true }
+    @{ Guid = '{0CCE9232-69AE-11D9-BED3-505054503030}'; Name = 'MPSSVC Rule-Level Policy Change';    S = $true; F = $true }
+    @{ Guid = '{0CCE9234-69AE-11D9-BED3-505054503030}'; Name = 'Other Policy Change Events';         S = $false; F = $true }
 
-    # Система
-    @{ Guid = '{0CCE9210-69AE-11D9-BED3-505054503030}'; Name = 'Изменение состояния безопасности';    S = $true; F = $true }
-    @{ Guid = '{0CCE9211-69AE-11D9-BED3-505054503030}'; Name = 'Расширение системы безопасности';     S = $true; F = $true }
-    @{ Guid = '{0CCE9212-69AE-11D9-BED3-505054503030}'; Name = 'Целостность системы';                 S = $true; F = $true }
-    @{ Guid = '{0CCE9214-69AE-11D9-BED3-505054503030}'; Name = 'Прочие системные события';            S = $false; F = $true }
+    # System
+    @{ Guid = '{0CCE9210-69AE-11D9-BED3-505054503030}'; Name = 'Security State Change';              S = $true; F = $true }
+    @{ Guid = '{0CCE9211-69AE-11D9-BED3-505054503030}'; Name = 'Security System Extension';          S = $true; F = $true }
+    @{ Guid = '{0CCE9212-69AE-11D9-BED3-505054503030}'; Name = 'System Integrity';                   S = $true; F = $true }
+    @{ Guid = '{0CCE9214-69AE-11D9-BED3-505054503030}'; Name = 'Other System Events';                S = $false; F = $true }
 )
 
-Write-KscLog '--- Подкатегории расширенной политики аудита ---'
+Write-KscLog '--- Advanced audit policy subcategories ---'
 $applied = 0
 foreach ($s in $subcategories) {
-    if (-not $PSCmdlet.ShouldProcess($s.Name, 'Настроить аудит')) { continue }
+    if (-not $PSCmdlet.ShouldProcess($s.Name, 'Configure audit')) { continue }
     $success = if ($s.S) { 'enable' } else { 'disable' }
     $failure = if ($s.F) { 'enable' } else { 'disable' }
     $out = & auditpol.exe /set /subcategory:"$($s.Guid)" /success:$success /failure:$failure 2>&1
     if ($LASTEXITCODE -eq 0) {
         $applied++
-        Write-KscLog ('  + {0}: успех={1}, отказ={2}' -f $s.Name, $success, $failure)
+        Write-KscLog ('  + {0}: success={1}, failure={2}' -f $s.Name, $success, $failure)
     }
     else {
-        Write-KscLog "  ! не удалось настроить '$($s.Name)' ($($s.Guid)): $out" 'WARN'
+        Write-KscLog "  ! failed to configure '$($s.Name)' ($($s.Guid)): $out" 'WARN'
     }
 }
-Write-KscLog "Настроено подкатегорий: $applied из $($subcategories.Count)." $(if ($applied -eq $subcategories.Count) { 'OK' } else { 'WARN' })
+Write-KscLog "Subcategories configured: $applied of $($subcategories.Count)." $(if ($applied -eq $subcategories.Count) { 'OK' } else { 'WARN' })
 
-# Расширенная политика имеет приоритет над устаревшей категорийной
+# Advanced audit policy takes precedence over the legacy category-based one
 New-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa' `
     -Name 'SCENoApplyLegacyAuditPolicy' -Value 1 -PropertyType DWord -Force | Out-Null
 
-# ------------------------------------------------------------------ 2. Детализация событий
+# ------------------------------------------------------------------ 2. Event detail
 
-Write-KscLog '--- Детализация регистрируемых событий ---'
+Write-KscLog '--- Event detail level ---'
 
 $auditPolicyKey = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\Audit'
 if (-not (Test-Path $auditPolicyKey)) { New-Item -Path $auditPolicyKey -Force | Out-Null }
 New-ItemProperty -Path $auditPolicyKey -Name 'ProcessCreationIncludeCmdLine_Enabled' -Value 1 -PropertyType DWord -Force | Out-Null
-Write-KscLog '  + командная строка в событиях 4688' 'OK'
+Write-KscLog '  + command line included in 4688 events' 'OK'
 
-# ------------------------------------------------------------------ 3. Журналирование PowerShell
+# ------------------------------------------------------------------ 3. PowerShell logging
 
-Write-KscLog '--- Журналирование PowerShell ---'
+Write-KscLog '--- PowerShell logging ---'
 
 $transcriptDir = $KSC.AuditTranscriptDir
 if (-not (Test-Path $transcriptDir)) { New-Item -ItemType Directory -Path $transcriptDir -Force | Out-Null }
 
-# Транскрипты содержат вывод команд администратора: читать вправе только
-# администраторы и система, учётная запись сбора получает чтение отдельно.
+# Transcripts contain administrator command output: only administrators and
+# SYSTEM may read them, the collector account is granted read access separately.
 $acl = Get-Acl $transcriptDir
 $acl.SetAccessRuleProtection($true, $false)
 $acl.Access | ForEach-Object { [void]$acl.RemoveAccessRule($_) }
@@ -151,7 +152,7 @@ foreach ($id in @('NT AUTHORITY\SYSTEM', 'BUILTIN\Administrators')) {
     $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule(
         $id, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow')))
 }
-if ($PSCmdlet.ShouldProcess($transcriptDir, 'Ограничить права')) { Set-Acl -Path $transcriptDir -AclObject $acl }
+if ($PSCmdlet.ShouldProcess($transcriptDir, 'Restrict permissions')) { Set-Acl -Path $transcriptDir -AclObject $acl }
 
 $psPolicies = @(
     @{ Path = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\PowerShell\ScriptBlockLogging'; Name = 'EnableScriptBlockLogging'; Value = 1; Type = 'DWord' }
@@ -162,19 +163,19 @@ $psPolicies = @(
     @{ Path = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\PowerShell\Transcription';      Name = 'OutputDirectory';          Value = $transcriptDir; Type = 'String' }
 )
 foreach ($p in $psPolicies) {
-    if (-not $PSCmdlet.ShouldProcess("$($p.Path)\$($p.Name)", 'Задать значение')) { continue }
+    if (-not $PSCmdlet.ShouldProcess("$($p.Path)\$($p.Name)", 'Set value')) { continue }
     if (-not (Test-Path $p.Path)) { New-Item -Path $p.Path -Force | Out-Null }
     New-ItemProperty -Path $p.Path -Name $p.Name -Value $p.Value -PropertyType $p.Type -Force | Out-Null
 }
-Write-KscLog "  + блоки сценариев, модули, транскрипция -> $transcriptDir" 'OK'
+Write-KscLog "  + script blocks, modules, transcription -> $transcriptDir" 'OK'
 
-# ------------------------------------------------------------------ 4. Журналы событий
+# ------------------------------------------------------------------ 4. Event logs
 
-Write-KscLog '--- Журналы событий ---'
+Write-KscLog '--- Event logs ---'
 
-# Журнал безопасности — основной источник; остальные каналы дают контекст
-# при расследовании. Локальный объём рассчитан на несколько суток автономной
-# работы: долговременное хранение (год) обеспечивает коллектор.
+# The Security log is the main source; the other channels provide context for
+# investigations. Local capacity covers a few days of standalone operation:
+# long-term retention (one year) is provided by the collector.
 $logs = [ordered]@{
     'Security'                                                      = $KSC.AuditSecurityLogSizeMb
     'System'                                                        = 256
@@ -191,19 +192,19 @@ $logs = [ordered]@{
 }
 foreach ($name in $logs.Keys) {
     $sizeBytes = $logs[$name] * 1MB
-    if (-not $PSCmdlet.ShouldProcess("Журнал $name", "Включить, размер $($logs[$name]) МБ")) { continue }
+    if (-not $PSCmdlet.ShouldProcess("Log $name", "Enable, size $($logs[$name]) MB")) { continue }
     $out = & wevtutil.exe sl "$name" /e:true /ms:$sizeBytes /rt:false 2>&1
-    if ($LASTEXITCODE -eq 0) { Write-KscLog ('  + {0}: {1} МБ' -f $name, $logs[$name]) }
-    else { Write-KscLog "  ! канал '$name' недоступен: $out" 'WARN' }
+    if ($LASTEXITCODE -eq 0) { Write-KscLog ('  + {0}: {1} MB' -f $name, $logs[$name]) }
+    else { Write-KscLog "  ! channel '$name' is not available: $out" 'WARN' }
 }
 
-# ------------------------------------------------------------------ 5. Аудит доступа к каталогам
+# ------------------------------------------------------------------ 5. Directory access auditing
 
 if (-not $SkipSacl) {
-    Write-KscLog '--- Аудит доступа к каталогам (SACL) ---'
+    Write-KscLog '--- Directory access auditing (SACL) ---'
 
-    # Регистрируются изменения, удаление, смена прав и владельца. Чтение
-    # не регистрируется: объём событий несоизмерим с их ценностью.
+    # Modification, deletion, permission and ownership changes are logged.
+    # Read access is not logged: the event volume outweighs its value.
     $auditRights = [Security.AccessControl.FileSystemRights]'WriteData, AppendData, Delete, DeleteSubdirectoriesAndFiles, ChangePermissions, TakeOwnership'
     $saclPaths = @(
         $KSC.AuditLogDir
@@ -214,28 +215,28 @@ if (-not $SkipSacl) {
     ) | Where-Object { $_ -and (Test-Path $_) }
 
     foreach ($path in $saclPaths) {
-        if (-not $PSCmdlet.ShouldProcess($path, 'Включить аудит изменений')) { continue }
+        if (-not $PSCmdlet.ShouldProcess($path, 'Enable change auditing')) { continue }
         try {
             $dirAcl = Get-Acl -Path $path -Audit
             $rule = New-Object Security.AccessControl.FileSystemAuditRule(
                 'Everyone', $auditRights, 'ContainerInherit,ObjectInherit', 'None', 'Success,Failure')
             $dirAcl.AddAuditRule($rule)
             Set-Acl -Path $path -AclObject $dirAcl
-            Write-KscLog "  + $path : изменение, удаление, смена прав (успех и отказ)" 'OK'
+            Write-KscLog "  + $path : modification, deletion, permission change (success and failure)" 'OK'
         }
         catch {
-            Write-KscLog "  ! $path : не удалось задать аудит — $($_.Exception.Message)" 'WARN'
+            Write-KscLog "  ! $path : failed to set auditing - $($_.Exception.Message)" 'WARN'
         }
     }
 
-    # ---------------------------------------------------------- 6. Аудит реестра
+    # ---------------------------------------------------------- 6. Registry auditing
 
-    Write-KscLog '--- Аудит ветки реестра KasperskyLab ---'
+    Write-KscLog '--- Auditing of the KasperskyLab registry branch ---'
     $regPaths = @('HKLM:\SOFTWARE\KasperskyLab', 'HKLM:\SOFTWARE\WOW6432Node\KasperskyLab') |
         Where-Object { Test-Path $_ }
 
     foreach ($path in $regPaths) {
-        if (-not $PSCmdlet.ShouldProcess($path, 'Включить аудит изменений')) { continue }
+        if (-not $PSCmdlet.ShouldProcess($path, 'Enable change auditing')) { continue }
         try {
             $regAcl = Get-Acl -Path $path -Audit
             $rule = New-Object Security.AccessControl.RegistryAuditRule(
@@ -247,22 +248,22 @@ if (-not $SkipSacl) {
             Write-KscLog "  + $path" 'OK'
         }
         catch {
-            Write-KscLog "  ! $path : не удалось задать аудит — $($_.Exception.Message)" 'WARN'
+            Write-KscLog "  ! $path : failed to set auditing - $($_.Exception.Message)" 'WARN'
         }
     }
 }
 else {
-    Write-KscLog 'Аудит доступа к каталогам и реестру пропущен (-SkipSacl).' 'WARN'
+    Write-KscLog 'Directory and registry access auditing skipped (-SkipSacl).' 'WARN'
 }
 
-# ------------------------------------------------------------------ Итог
+# ------------------------------------------------------------------ Summary
 
-Write-KscLog '--- Действующая политика аудита (сводка) ---'
+Write-KscLog '--- Effective audit policy (summary) ---'
 & auditpol.exe /get /category:* | Select-Object -Skip 1 | Where-Object { $_ -match '\S' } | ForEach-Object {
     Write-Host "    $_" -ForegroundColor DarkGray
 }
 
 if ((Get-CimInstance Win32_ComputerSystem).PartOfDomain) {
-    Write-KscLog 'Узел в домене: закрепите тот же состав аудита в GPO, иначе локальные значения будут перезаписаны при обновлении политики.' 'WARN'
+    Write-KscLog 'Host is domain-joined: define the same audit settings in a GPO, otherwise local values will be overwritten at the next policy refresh.' 'WARN'
 }
-Write-KscLog '=== Аудит ОС настроен. Следующий шаг: 10_Enable-DbAudit.ps1 ===' 'OK'
+Write-KscLog '=== OS audit configured. Next step: 10_Enable-DbAudit.ps1 ===' 'OK'

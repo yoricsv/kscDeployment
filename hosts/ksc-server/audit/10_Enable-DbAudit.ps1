@@ -1,40 +1,46 @@
-﻿<#
+<#
 .SYNOPSIS
-    Включение аудита СУБД MariaDB (плагин server_audit) по требованиям Приказа ОАЦ № 130.
+    Enables MariaDB auditing (server_audit plugin) per Order No. 130 of the OAC.
 
 .DESCRIPTION
-    Скрипт выполняется на узле СУБД (по умолчанию $KSC.AuditDbHost) и:
+    Runs on the database host (by default $KSC.AuditDbHost) and:
 
-      1. Проверяет наличие библиотеки плагина server_audit.dll в каталоге плагинов.
-      2. Создаёт каталог файла аудита и назначает на него ограничительные права
-         (SYSTEM, администраторы, учётная запись службы СУБД, группа аудиторов).
-      3. Подставляет блок параметров из 11_server_audit.ini.template в my.ini
-         между маркерами KSC-AUDIT BEGIN / KSC-AUDIT END (идемпотентно).
-      4. Перезапускает службу СУБД и проверяет фактические значения переменных
-         server_audit_* и наличие записей в файле аудита.
+      1. Verifies that the server_audit.dll plugin library is present in the
+         plugin directory.
+      2. Creates the audit file directory and applies restrictive permissions
+         (SYSTEM, administrators, the database service account, auditors group).
+      3. Inserts the parameter block from 11_server_audit.ini.template into
+         my.ini between the KSC-AUDIT BEGIN / KSC-AUDIT END markers (idempotent).
+      4. Restarts the database service and verifies the effective server_audit_*
+         variables and the presence of records in the audit file.
 
-    Состав регистрируемых событий задаётся в common/config.ps1
-    ($KSC.AuditEvents, $KSC.AuditExclUsers) — см. docs/06_db_audit/README.md.
+    The set of logged events is defined in common/config.ps1
+    ($KSC.AuditEvents, $KSC.AuditExclUsers).
 
-    Проверка (шаг 4) требует пароль root СУБД; при -SkipVerify выполняется
-    только настройка, а команды для ручной проверки выводятся на экран.
+    Verification (step 4) requires the database root password; with -SkipVerify
+    only the configuration is applied and the manual verification commands are
+    printed.
+
+    Existing KSC data is not touched: the script does not modify schemas,
+    tables or rows; the only database queries are read-only
+    (SHOW GLOBAL VARIABLES and SELECT 1).
 
 .PARAMETER IniPath
-    Путь к my.ini. По умолчанию определяется автоматически: <DataDir>\my.ini,
-    затем <InstallDir>\data\my.ini.
+    Path to my.ini. Detected automatically by default: <DataDir>\my.ini,
+    then <InstallDir>\data\my.ini.
 
 .PARAMETER ServiceName
-    Имя службы СУБД. По умолчанию определяется автоматически (MariaDB, MySQL).
+    Database service name. Detected automatically by default (MariaDB, MySQL).
 
 .PARAMETER SkipVerify
-    Не подключаться к СУБД для проверки применённых параметров.
+    Do not connect to the database to verify the applied settings.
 
 .PARAMETER NoRestart
-    Не перезапускать службу: параметры вступят в силу при следующем запуске.
+    Do not restart the service: the settings take effect at the next start.
 
 .PARAMETER Rollback
-    Удалить блок параметров аудита из my.ini (плагин перестанет загружаться
-    после перезапуска службы). Файлы аудита не удаляются.
+    Remove the audit parameter block from my.ini (the plugin stops loading
+    after the service restart). Audit files are not deleted.
 
 .EXAMPLE
     .\10_Enable-DbAudit.ps1
@@ -54,72 +60,72 @@ $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\..\..\..\common\config.ps1"
 Assert-Elevated
 
-# Маркеры только из символов ASCII: my.ini сохраняется в однобайтовой кодировке,
-# и кириллица в маркере нарушила бы повторный поиск блока.
+# ASCII-only markers: my.ini is stored in a single-byte encoding, and
+# non-ASCII characters in a marker would break the repeated block lookup.
 $markerBegin = '# >>> KSC-AUDIT BEGIN (managed by 10_Enable-DbAudit.ps1, do not edit manually)'
 $markerEnd = '# <<< KSC-AUDIT END'
 
-# ------------------------------------------------------------------ Служба и пути
+# ------------------------------------------------------------------ Service and paths
 
 if (-not $ServiceName) {
     $svc = Get-Service | Where-Object { $_.Name -in @('MariaDB', 'MySQL') -or $_.DisplayName -match 'MariaDB' } | Select-Object -First 1
-    if (-not $svc) { throw 'Служба СУБД не найдена. Укажите её имя параметром -ServiceName.' }
+    if (-not $svc) { throw 'Database service not found. Specify it with -ServiceName.' }
     $ServiceName = $svc.Name
 }
-Write-KscLog "Служба СУБД: $ServiceName"
+Write-KscLog "Database service: $ServiceName"
 
 $svcCim = Get-CimInstance Win32_Service -Filter "Name='$ServiceName'"
 $svcAccount = $svcCim.StartName
-# Путь к mysqld в командной строке службы: "C:\...\bin\mysqld.exe" --defaults-file=...
+# Path to mysqld in the service command line: "C:\...\bin\mysqld.exe" --defaults-file=...
 $binPath = ([regex]'"?(?<p>[^"]+mysqld\.exe)"?').Match($svcCim.PathName).Groups['p'].Value
 $installDir = if ($binPath) { Split-Path (Split-Path $binPath -Parent) -Parent } else { $KSC.MariaDbInstallDir }
 $defaultsFile = ([regex]'--defaults-file="?(?<f>[^"]+\.ini)"?').Match($svcCim.PathName).Groups['f'].Value
 
-Write-KscLog "Каталог установки: $installDir"
-Write-KscLog "Учётная запись службы: $svcAccount"
+Write-KscLog "Installation directory: $installDir"
+Write-KscLog "Service account: $svcAccount"
 
 if (-not $IniPath) {
     $IniPath = @($defaultsFile, (Join-Path $KSC.MariaDbDataDir 'my.ini'), (Join-Path $installDir 'data\my.ini')) |
         Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
 }
 if (-not $IniPath -or -not (Test-Path $IniPath)) {
-    throw 'Не найден my.ini. Укажите путь параметром -IniPath.'
+    throw 'my.ini not found. Specify the path with -IniPath.'
 }
-Write-KscLog "Файл конфигурации: $IniPath"
+Write-KscLog "Configuration file: $IniPath"
 
-# ------------------------------------------------------------------ Откат
+# ------------------------------------------------------------------ Rollback
 
 if ($Rollback) {
     $text = Get-Content $IniPath -Raw
     if ($text -notmatch [regex]::Escape($markerBegin)) {
-        Write-KscLog 'Блок параметров аудита в my.ini отсутствует — откат не требуется.' 'WARN'
+        Write-KscLog 'The audit parameter block is absent from my.ini - rollback is not required.' 'WARN'
         return
     }
     Copy-Item $IniPath "$IniPath.bak-$(Get-Date -Format yyyyMMddHHmmss)"
     $pattern = '(?s)\r?\n?' + [regex]::Escape($markerBegin) + '.*?' + [regex]::Escape($markerEnd) + '\r?\n?'
     Set-Content -Path $IniPath -Value ([regex]::Replace($text, $pattern, "`r`n")) -Encoding ASCII
-    Write-KscLog 'Блок параметров аудита удалён из my.ini. Перезапустите службу для применения.' 'OK'
+    Write-KscLog 'Audit parameter block removed from my.ini. Restart the service to apply.' 'OK'
     return
 }
 
-# ------------------------------------------------------------------ 1. Плагин
+# ------------------------------------------------------------------ 1. Plugin
 
 $pluginDll = Join-Path $installDir 'lib\plugin\server_audit.dll'
 if (-not (Test-Path $pluginDll)) {
-    throw "Не найдена библиотека плагина: $pluginDll. Проверьте комплектность установки MariaDB."
+    throw "Plugin library not found: $pluginDll. Check the MariaDB installation."
 }
-Write-KscLog "Библиотека плагина найдена: $pluginDll" 'OK'
+Write-KscLog "Plugin library found: $pluginDll" 'OK'
 
-# ------------------------------------------------------------------ 2. Каталог аудита и права
+# ------------------------------------------------------------------ 2. Audit directory and permissions
 
 $auditDir = $KSC.AuditLogDir
 $auditFile = Join-Path $auditDir $KSC.AuditFileName
 if (-not (Test-Path $auditDir)) {
     New-Item -ItemType Directory -Path $auditDir -Force | Out-Null
-    Write-KscLog "Создан каталог аудита: $auditDir" 'OK'
+    Write-KscLog "Audit directory created: $auditDir" 'OK'
 }
 
-# Доступ к файлу аудита: запись — только служба СУБД и система, чтение — аудиторы.
+# Audit file access: write - the database service and SYSTEM only, read - auditors.
 $acl = Get-Acl $auditDir
 $acl.SetAccessRuleProtection($true, $false)
 $acl.Access | ForEach-Object { $acl.RemoveAccessRule($_) | Out-Null }
@@ -130,10 +136,10 @@ function Add-AuditDirRule {
         $rule = New-Object Security.AccessControl.FileSystemAccessRule(
             $Identity, $Rights, 'ContainerInherit,ObjectInherit', 'None', 'Allow')
         $acl.AddAccessRule($rule)
-        Write-KscLog "  права на каталог аудита: $Identity -> $Rights"
+        Write-KscLog "  audit directory permission: $Identity -> $Rights"
     }
     catch {
-        Write-KscLog "  не удалось назначить права для '$Identity': $($_.Exception.Message)" 'WARN'
+        Write-KscLog "  failed to grant permissions to '$Identity': $($_.Exception.Message)" 'WARN'
     }
 }
 
@@ -145,9 +151,9 @@ if ($svcAccount -and $svcAccount -notmatch '^(LocalSystem|NT AUTHORITY\\SYSTEM)$
 $auditorsGroup = "$($KSC.DomainNetBios)\$($KSC.AuditorsGroup)"
 Add-AuditDirRule -Identity $auditorsGroup -Rights 'ReadAndExecute'
 Set-Acl -Path $auditDir -AclObject $acl
-Write-KscLog "Права на $auditDir ограничены (наследование отключено)." 'OK'
+Write-KscLog "Permissions on $auditDir restricted (inheritance disabled)." 'OK'
 
-# ------------------------------------------------------------------ 3. Параметры в my.ini
+# ------------------------------------------------------------------ 3. Parameters in my.ini
 
 $templatePath = Join-Path $PSScriptRoot '11_server_audit.ini.template'
 $block = (Get-Content $templatePath -Encoding UTF8 |
@@ -166,41 +172,41 @@ Copy-Item $IniPath "$IniPath.bak-$(Get-Date -Format yyyyMMddHHmmss)"
 
 if ($ini -match [regex]::Escape($markerBegin)) {
     $pattern = '(?s)' + [regex]::Escape($markerBegin) + '.*?' + [regex]::Escape($markerEnd)
-    # Удвоение '$' защищает текст замены от толкования как ссылки на группу.
+    # Doubling '$' keeps the replacement text from being read as a group reference.
     $ini = [regex]::Replace($ini, $pattern, $block.Replace('$', '$$'))
-    Write-KscLog 'Блок параметров аудита в my.ini обновлён.' 'OK'
+    Write-KscLog 'Audit parameter block in my.ini updated.' 'OK'
 }
 else {
     $ini = $ini.TrimEnd() + "`r`n`r`n" + $block + "`r`n"
-    Write-KscLog 'Блок параметров аудита добавлен в my.ini.' 'OK'
+    Write-KscLog 'Audit parameter block added to my.ini.' 'OK'
 }
 Set-Content -Path $IniPath -Value $ini -Encoding ASCII
 
-# ------------------------------------------------------------------ 4. Перезапуск и проверка
+# ------------------------------------------------------------------ 4. Restart and verification
 
 if ($NoRestart) {
-    Write-KscLog 'Перезапуск службы пропущен (-NoRestart): параметры применятся при следующем старте.' 'WARN'
+    Write-KscLog 'Service restart skipped (-NoRestart): settings will apply at the next start.' 'WARN'
     return
 }
 
-Write-KscLog 'Перезапуск службы СУБД...'
+Write-KscLog 'Restarting the database service (KSC will be unavailable for the duration)...'
 Restart-Service $ServiceName -Force
 (Get-Service $ServiceName).WaitForStatus('Running', '00:03:00')
-Write-KscLog 'Служба запущена.' 'OK'
+Write-KscLog 'Service started.' 'OK'
 
 if ($SkipVerify) {
-    Write-KscLog "Проверка пропущена. Выполните вручную: SHOW GLOBAL VARIABLES LIKE 'server_audit%';" 'WARN'
+    Write-KscLog "Verification skipped. Run manually: SHOW GLOBAL VARIABLES LIKE 'server_audit%';" 'WARN'
     return
 }
 
 $mysqlExe = Join-Path $installDir 'bin\mysql.exe'
 if (-not (Test-Path $mysqlExe)) { $mysqlExe = Join-Path $installDir 'bin\mariadb.exe' }
 if (-not (Test-Path $mysqlExe)) {
-    Write-KscLog 'Клиент mysql.exe не найден — проверка пропущена.' 'WARN'
+    Write-KscLog 'Client mysql.exe not found - verification skipped.' 'WARN'
     return
 }
 
-$rootPwdSec = Read-Host 'Пароль root СУБД (для проверки параметров)' -AsSecureString
+$rootPwdSec = Read-Host 'Database root password (for settings verification)' -AsSecureString
 $tmpCnf = Join-Path $env:TEMP ('ksc-audit-{0}.ini' -f ([guid]::NewGuid()))
 try {
     $rootPlain = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
@@ -209,13 +215,13 @@ try {
     icacls $tmpCnf /inheritance:r /grant:r "$env:USERNAME:(R)" 'SYSTEM:(R)' | Out-Null
 
     $vars = & $mysqlExe "--defaults-file=$tmpCnf" -N -B -e "SHOW GLOBAL VARIABLES LIKE 'server_audit%'" 2>&1
-    if ($LASTEXITCODE -ne 0) { throw "Ошибка подключения к СУБД: $vars" }
+    if ($LASTEXITCODE -ne 0) { throw "Database connection error: $vars" }
     $vars | Out-String | Write-Host
 
     $logging = ($vars | Where-Object { $_ -match '^server_audit_logging' }) -replace '.*\s'
-    if ($logging -ne 'ON') { throw 'server_audit_logging не равен ON — аудит не включён.' }
+    if ($logging -ne 'ON') { throw 'server_audit_logging is not ON - auditing is disabled.' }
 
-    # Контрольное событие: неуспешная попытка обращения к несуществующей таблице
+    # Read-only probe query that produces an audit record
     & $mysqlExe "--defaults-file=$tmpCnf" -e 'SELECT 1 FROM information_schema.tables LIMIT 1' | Out-Null
 }
 finally {
@@ -228,11 +234,11 @@ finally {
 
 if (Test-Path $auditFile) {
     $last = Get-Content $auditFile -Tail 3
-    Write-KscLog "Последние записи файла аудита ($auditFile):" 'OK'
+    Write-KscLog "Last records of the audit file ($auditFile):" 'OK'
     $last | ForEach-Object { Write-Host "    $_" -ForegroundColor Gray }
 }
 else {
-    Write-KscLog "Файл аудита $auditFile ещё не создан — проверьте права службы на каталог." 'WARN'
+    Write-KscLog "Audit file $auditFile has not been created yet - check the service permissions on the directory." 'WARN'
 }
 
-Write-KscLog '=== Аудит СУБД включён. Следующий шаг: 20_Install-AuditForwarder.ps1 ===' 'OK'
+Write-KscLog '=== Database audit enabled. Next step: 20_Install-AuditForwarder.ps1 ===' 'OK'

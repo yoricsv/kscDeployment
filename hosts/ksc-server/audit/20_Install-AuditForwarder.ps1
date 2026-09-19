@@ -1,27 +1,29 @@
-﻿<#
+<#
 .SYNOPSIS
-    Установка конвертера записей аудита MariaDB в журнал событий Windows.
+    Installs the forwarder that converts MariaDB audit records into the Windows event log.
 
 .DESCRIPTION
-    Плагин server_audit на Windows умеет писать только в файл
-    (MDEV-19851: значение SYSLOG на этой платформе не действует), а MP 10 Collector
-    в выбранной схеме читает журнал Windows удалённо. Связующее звено — конвертер,
-    который переносит новые записи файла аудита в отдельный журнал событий.
+    On Windows the server_audit plugin can only write to a file
+    (MDEV-19851: the SYSLOG value has no effect on this platform), while in the
+    chosen design MP 10 Collector reads the Windows event log remotely. The
+    link between them is a forwarder that copies new audit file records into a
+    dedicated event log.
 
-    Скрипт:
-      1. Создаёт журнал событий $KSC.AuditWinLogName и источник $KSC.AuditWinLogSource,
-         задаёт размер журнала и перезапись по мере заполнения.
-      2. Копирует рабочий сценарий и common/config.ps1 в
-         C:\ProgramData\KscDeployment\bin (права: запись — только администраторы
-         и SYSTEM), чтобы работа конвертера не зависела от носителя с репозиторием.
-      3. Регистрирует задачу планировщика "KSC-DbAudit-Forwarder": запуск от SYSTEM
-         при старте системы и далее каждые $KSC.AuditForwardPeriodMin минут,
-         параллельные запуски запрещены.
-      4. Выполняет задачу и показывает последние перенесённые события.
+    The script:
+      1. Creates the event log $KSC.AuditWinLogName and the source
+         $KSC.AuditWinLogSource, sets the log size and overwrite-as-needed mode.
+      2. Copies the worker script and common/config.ps1 into
+         C:\ProgramData\KscDeployment\bin (write access: administrators and
+         SYSTEM only) so that the forwarder does not depend on the repository
+         location.
+      3. Registers the scheduled task "KSC-DbAudit-Forwarder": runs as SYSTEM
+         at system start and then every $KSC.AuditForwardPeriodMin minutes,
+         parallel runs are not allowed.
+      4. Runs the task and shows the last forwarded events.
 
 .PARAMETER Rollback
-    Удалить задачу планировщика и рабочие файлы. Журнал событий сохраняется
-    (удаление журнала с накопленными событиями выполняется только вручную).
+    Remove the scheduled task and the working files. The event log is kept
+    (deleting a log with collected events is a manual operation).
 
 .EXAMPLE
     .\20_Install-AuditForwarder.ps1
@@ -39,43 +41,43 @@ $binRoot = 'C:\ProgramData\KscDeployment\bin'
 $workerRel = 'hosts\ksc-server\audit\21_Publish-DbAuditToEventLog.ps1'
 $workerPath = Join-Path $binRoot $workerRel
 
-# ------------------------------------------------------------------ Откат
+# ------------------------------------------------------------------ Rollback
 
 if ($Rollback) {
     if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
         Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
-        Write-KscLog "Задача планировщика '$taskName' удалена." 'OK'
+        Write-KscLog "Scheduled task '$taskName' removed." 'OK'
     }
     if (Test-Path $binRoot) {
         Remove-Item $binRoot -Recurse -Force
-        Write-KscLog "Рабочие файлы удалены: $binRoot" 'OK'
+        Write-KscLog "Working files removed: $binRoot" 'OK'
     }
-    Write-KscLog "Журнал '$($KSC.AuditWinLogName)' сохранён. Удаление: Remove-EventLog -LogName '$($KSC.AuditWinLogName)'" 'WARN'
+    Write-KscLog "Event log '$($KSC.AuditWinLogName)' kept. To delete: Remove-EventLog -LogName '$($KSC.AuditWinLogName)'" 'WARN'
     return
 }
 
-# ------------------------------------------------------------------ 1. Журнал событий
+# ------------------------------------------------------------------ 1. Event log
 
 if ([Diagnostics.EventLog]::SourceExists($KSC.AuditWinLogSource)) {
     $existingLog = [Diagnostics.EventLog]::LogNameFromSourceName($KSC.AuditWinLogSource, '.')
     if ($existingLog -ne $KSC.AuditWinLogName) {
-        throw "Источник '$($KSC.AuditWinLogSource)' уже зарегистрирован в журнале '$existingLog'. Удалите его: Remove-EventLog -Source '$($KSC.AuditWinLogSource)'"
+        throw "Source '$($KSC.AuditWinLogSource)' is already registered in log '$existingLog'. Remove it: Remove-EventLog -Source '$($KSC.AuditWinLogSource)'"
     }
-    Write-KscLog "Журнал '$($KSC.AuditWinLogName)' и источник '$($KSC.AuditWinLogSource)' уже существуют." 'WARN'
+    Write-KscLog "Event log '$($KSC.AuditWinLogName)' and source '$($KSC.AuditWinLogSource)' already exist." 'WARN'
 }
 else {
     New-EventLog -LogName $KSC.AuditWinLogName -Source $KSC.AuditWinLogSource
-    Write-KscLog "Создан журнал '$($KSC.AuditWinLogName)' с источником '$($KSC.AuditWinLogSource)'." 'OK'
+    Write-KscLog "Created event log '$($KSC.AuditWinLogName)' with source '$($KSC.AuditWinLogSource)'." 'OK'
 }
 
-# Журнал — локальный буфер доставки в SIEM: перезапись по мере заполнения
-# допустима, долговременное хранение обеспечивает коллектор.
+# The log is a local delivery buffer for the SIEM: overwrite as needed is
+# acceptable, long-term retention is provided by the collector.
 Limit-EventLog -LogName $KSC.AuditWinLogName `
     -MaximumSize ($KSC.AuditWinLogSizeMb * 1MB) `
     -OverflowAction OverwriteAsNeeded
-Write-KscLog "Размер журнала: $($KSC.AuditWinLogSizeMb) МБ, режим — перезапись по мере заполнения." 'OK'
+Write-KscLog "Log size: $($KSC.AuditWinLogSizeMb) MB, mode: overwrite as needed." 'OK'
 
-# ------------------------------------------------------------------ 2. Рабочие файлы
+# ------------------------------------------------------------------ 2. Working files
 
 foreach ($dir in @($binRoot, (Join-Path $binRoot 'common'), (Join-Path $binRoot 'hosts\ksc-server\audit'))) {
     if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
@@ -83,9 +85,9 @@ foreach ($dir in @($binRoot, (Join-Path $binRoot 'common'), (Join-Path $binRoot 
 
 Copy-Item (Join-Path $PSScriptRoot '21_Publish-DbAuditToEventLog.ps1') $workerPath -Force
 Copy-Item "$PSScriptRoot\..\..\..\common\config.ps1" (Join-Path $binRoot 'common\config.ps1') -Force
-Write-KscLog "Рабочие файлы размещены: $binRoot" 'OK'
+Write-KscLog "Working files deployed: $binRoot" 'OK'
 
-# Изменять сценарий конвертера вправе только администраторы и система.
+# Only administrators and SYSTEM may modify the forwarder script.
 $acl = Get-Acl $binRoot
 $acl.SetAccessRuleProtection($true, $false)
 $acl.Access | ForEach-Object { $acl.RemoveAccessRule($_) | Out-Null }
@@ -96,21 +98,21 @@ foreach ($id in @('NT AUTHORITY\SYSTEM', 'BUILTIN\Administrators')) {
 $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule(
     'BUILTIN\Users', 'ReadAndExecute', 'ContainerInherit,ObjectInherit', 'None', 'Allow')))
 Set-Acl -Path $binRoot -AclObject $acl
-Write-KscLog 'Права на каталог конвертера ограничены.' 'OK'
+Write-KscLog 'Permissions on the forwarder directory restricted.' 'OK'
 
-# ------------------------------------------------------------------ 3. Задача планировщика
+# ------------------------------------------------------------------ 3. Scheduled task
 
 $interval = 'PT{0}M' -f $KSC.AuditForwardPeriodMin
 $arguments = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "{0}"' -f $workerPath
 
-# Задача описывается XML: только так задаётся бессрочное повторение
-# с интервалом в минуту (командлеты New-ScheduledTaskTrigger требуют
-# конечной длительности повторения).
+# The task is defined in XML: this is the only way to set an indefinite
+# repetition with a one-minute interval (New-ScheduledTaskTrigger requires
+# a finite repetition duration).
 $taskXml = @"
 <?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.3" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
-    <Description>Перенос записей аудита MariaDB (server_audit) в журнал событий Windows для сбора MP 10 Collector.</Description>
+    <Description>Forwards MariaDB audit records (server_audit) into the Windows event log for collection by MP 10 Collector.</Description>
     <URI>\$taskName</URI>
   </RegistrationInfo>
   <Triggers>
@@ -170,22 +172,22 @@ $taskXml = @"
 "@
 
 Register-ScheduledTask -TaskName $taskName -Xml $taskXml -Force | Out-Null
-Write-KscLog "Задача '$taskName' зарегистрирована: запуск от SYSTEM каждые $($KSC.AuditForwardPeriodMin) мин." 'OK'
+Write-KscLog "Task '$taskName' registered: runs as SYSTEM every $($KSC.AuditForwardPeriodMin) min." 'OK'
 
-# ------------------------------------------------------------------ 4. Первый запуск
+# ------------------------------------------------------------------ 4. First run
 
 Start-ScheduledTask -TaskName $taskName
 Start-Sleep -Seconds 10
 $info = Get-ScheduledTaskInfo -TaskName $taskName
-Write-KscLog "Код завершения последнего запуска: $($info.LastTaskResult) (0 — успешно)." $(if ($info.LastTaskResult -eq 0) { 'OK' } else { 'WARN' })
+Write-KscLog "Last run exit code: $($info.LastTaskResult) (0 - success)." $(if ($info.LastTaskResult -eq 0) { 'OK' } else { 'WARN' })
 
 $events = Get-WinEvent -LogName $KSC.AuditWinLogName -MaxEvents 5 -ErrorAction SilentlyContinue
 if ($events) {
-    Write-KscLog 'Последние события журнала аудита СУБД:' 'OK'
+    Write-KscLog 'Last events in the database audit log:' 'OK'
     $events | ForEach-Object { Write-Host ('    {0}  id={1}  {2}' -f $_.TimeCreated, $_.Id, ($_.Message -split "`r?`n")[0]) -ForegroundColor Gray }
 }
 else {
-    Write-KscLog 'События пока не перенесены: проверьте, что аудит включён (10_Enable-DbAudit.ps1) и файл аудита пополняется.' 'WARN'
+    Write-KscLog 'No events forwarded yet: check that auditing is enabled (10_Enable-DbAudit.ps1) and the audit file is growing.' 'WARN'
 }
 
-Write-KscLog '=== Конвертер установлен. Следующий шаг: 40_Set-AuditCollectorAccess.ps1 ===' 'OK'
+Write-KscLog '=== Forwarder installed. Next step: 40_Set-AuditCollectorAccess.ps1 ===' 'OK'

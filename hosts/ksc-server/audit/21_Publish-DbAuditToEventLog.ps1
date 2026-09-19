@@ -1,36 +1,35 @@
-﻿<#
+<#
 .SYNOPSIS
-    Перенос записей файла аудита MariaDB в журнал событий Windows.
+    Forwards MariaDB audit file records into the Windows event log.
 
 .DESCRIPTION
-    Рабочий сценарий конвертера: читает новые строки файла server_audit.log,
-    разбирает их на поля и записывает в журнал Windows, откуда события
-    забирает MP 10 Collector.
+    Worker script of the forwarder: reads new lines of server_audit.log,
+    parses them into fields and writes them into the Windows event log, from
+    which MP 10 Collector picks the events up.
 
-    Устанавливается и регистрируется в планировщике скриптом
-    20_Install-AuditForwarder.ps1; самостоятельный запуск нужен только
-    для диагностики.
+    It is deployed and registered in the Task Scheduler by
+    20_Install-AuditForwarder.ps1; a manual run is only needed for diagnostics.
 
-    Особенности:
-      * позиция чтения хранится в файле состояния, повторная отправка
-        записей исключена;
-      * ротация файла плагином отслеживается по уменьшению размера: остаток
-        дочитывается из server_audit.log.1, после чего чтение продолжается
-        с начала нового файла;
-      * параллельный запуск блокируется мьютексом;
-      * через AuditHeartbeatMin в журнал пишется служебная запись (код 1100),
-        по которой в SIEM контролируется работоспособность источника.
+    Details:
+      * the read position is kept in a state file, so records are never
+        forwarded twice;
+      * file rotation by the plugin is detected by a decrease in file size:
+        the remainder is read from server_audit.log.1, after which reading
+        continues from the beginning of the new file;
+      * parallel runs are blocked by a mutex;
+      * every AuditHeartbeatMin minutes a service record (event id 1100) is
+        written so that the SIEM can monitor source availability.
 
-    Формат записи плагина:
+    Plugin record format:
         timestamp,serverhost,username,host,connectionid,queryid,operation,database,object,retcode
 
 .PARAMETER StateFile
-    Файл состояния (позиция чтения). По умолчанию
+    State file (read position). Default:
     C:\ProgramData\KscDeployment\audit-forwarder-state.json.
 
 .PARAMETER MaxBytesPerRun
-    Предел объёма файла аудита, обрабатываемого за один запуск (защита от лавины).
-    Остаток читается следующим запуском. По умолчанию 64 МБ.
+    Maximum amount of the audit file processed in a single run (burst
+    protection). The remainder is read by the next run. Default 64 MB.
 
 .EXAMPLE
     .\21_Publish-DbAuditToEventLog.ps1 -Verbose
@@ -48,11 +47,11 @@ $auditFile = Join-Path $KSC.AuditLogDir $KSC.AuditFileName
 $logName = $KSC.AuditWinLogName
 $source = $KSC.AuditWinLogSource
 
-# Предельный размер сообщения события Windows — 31 839 символов.
+# Maximum Windows event message size is 31 839 characters.
 $messageLimit = 30000
 
-# Коды событий: сессии 1001-1003, команды 1010-1013, объекты 1020,
-# служебные 1100 (контроль работоспособности) и 1101 (ошибка конвертера).
+# Event ids: sessions 1001-1003, statements 1010-1013, objects 1020,
+# service events 1100 (health check) and 1101 (forwarder error).
 $eventIds = @{
     CONNECT             = 1001
     DISCONNECT          = 1002
@@ -73,12 +72,12 @@ $eventIds = @{
 
 $recordPattern = [regex]'^(?<ts>\d{8}\s\d{2}:\d{2}:\d{2}),(?<srvhost>[^,]*),(?<user>[^,]*),(?<host>[^,]*),(?<connid>\d*),(?<queryid>\d*),(?<op>[A-Z_]+),(?<db>[^,]*),(?<obj>.*),(?<ret>-?\d+)\s*$'
 
-# ------------------------------------------------------------------ Состояние
+# ------------------------------------------------------------------ State
 
 function Read-ForwarderState {
     if (Test-Path $StateFile) {
         try { return Get-Content $StateFile -Raw | ConvertFrom-Json }
-        catch { Write-Verbose "Файл состояния повреждён, чтение начнётся с конца файла аудита." }
+        catch { Write-Verbose 'State file is corrupted, reading will start at the end of the audit file.' }
     }
     $size = if (Test-Path $auditFile) { (Get-Item $auditFile).Length } else { 0 }
     [pscustomobject]@{ Position = $size; LastHeartbeat = '1970-01-01T00:00:00'; Forwarded = 0 }
@@ -91,10 +90,10 @@ function Save-ForwarderState {
     $State | ConvertTo-Json -Depth 3 | Set-Content $StateFile -Encoding UTF8
 }
 
-# ------------------------------------------------------------------ Разбор и запись
+# ------------------------------------------------------------------ Parsing and writing
 
 function ConvertTo-AuditEvent {
-    <# Строка файла аудита -> объект с полями события ИБ (Приказ ОАЦ № 130, п. 2). #>
+    <# Audit file line -> object with security event fields (Order No. 130, item 2). #>
     param([string]$Line)
 
     $m = $recordPattern.Match($Line)
@@ -112,8 +111,9 @@ function ConvertTo-AuditEvent {
     $id = if ($eventIds.ContainsKey($op)) { $eventIds[$op] } else { 1099 }
     if ($op -eq 'CONNECT' -and $ret -ne 0) { $id = $eventIds['FAILED_CONNECT'] }
 
-    # Плагин помечает все команды как QUERY: класс определяется по тексту,
-    # иначе изменение полномочий и операции со схемой неотличимы от выборок.
+    # The plugin marks every statement as QUERY: the class is derived from the
+    # statement text, otherwise privilege changes and schema operations are
+    # indistinguishable from selects. The text is only classified, never executed.
     if ($id -eq $eventIds['QUERY']) {
         $sql = $m.Groups['obj'].Value.TrimStart("'", ' ', "`t")
         switch -Regex ($sql) {
@@ -126,7 +126,7 @@ function ConvertTo-AuditEvent {
     $type = if ($id -eq 1003 -or $ret -ne 0) { 'Warning' } else { 'Information' }
 
     $message = @(
-        "Аудит СУБД MariaDB: $op"
+        "MariaDB audit: $op"
         "event_time=$(if ($parsed -ne [datetime]::MinValue) { $parsed.ToString('yyyy-MM-dd HH:mm:ss') } else { $ts })"
         "db_user=$($m.Groups['user'].Value)"
         "src_host=$srcHost"
@@ -141,7 +141,7 @@ function ConvertTo-AuditEvent {
         "raw=$Line"
     ) -join "`r`n"
 
-    if ($message.Length -gt $messageLimit) { $message = $message.Substring(0, $messageLimit) + '...[обрезано]' }
+    if ($message.Length -gt $messageLimit) { $message = $message.Substring(0, $messageLimit) + '...[truncated]' }
 
     [pscustomobject]@{ EventId = $id; EntryType = $type; Message = $message }
 }
@@ -153,9 +153,10 @@ function Write-AuditEvent {
 
 function Read-AuditTail {
     <#
-        Читает завершённые строки файла начиная с байтовой позиции $From.
-        Возвращает строки и новую позицию — конец последнего перевода строки,
-        поэтому недописанная плагином строка будет прочитана при следующем запуске.
+        Reads complete lines of the file starting at byte position $From.
+        Returns the lines and the new position - the end of the last line
+        break, so a line still being written by the plugin is read on the
+        next run.
     #>
     param([string]$Path, [long]$From)
 
@@ -168,7 +169,7 @@ function Read-AuditTail {
         $available = $fs.Length - $start
         if ($available -le 0) { return [pscustomobject]@{ Lines = @(); Position = $start } }
 
-        # Ограничение объёма за один запуск: остаток будет прочитан следующим.
+        # Per-run volume limit: the remainder is read by the next run.
         $toRead = [int][Math]::Min($available, $MaxBytesPerRun)
         [void]$fs.Seek($start, 'Begin')
         $buffer = New-Object byte[] $toRead
@@ -184,24 +185,24 @@ function Read-AuditTail {
     finally { $fs.Dispose() }
 }
 
-# ------------------------------------------------------------------ Основной цикл
+# ------------------------------------------------------------------ Main loop
 
 $mutex = New-Object Threading.Mutex($false, 'Global\KscDbAuditForwarder')
 if (-not $mutex.WaitOne(0)) {
-    Write-Verbose 'Предыдущий запуск ещё выполняется — выход.'
+    Write-Verbose 'Previous run is still in progress - exiting.'
     return
 }
 
 try {
     if (-not [Diagnostics.EventLog]::SourceExists($source)) {
-        throw "Источник событий '$source' не зарегистрирован. Выполните 20_Install-AuditForwarder.ps1."
+        throw "Event source '$source' is not registered. Run 20_Install-AuditForwarder.ps1."
     }
 
     $state = Read-ForwarderState
     $sent = 0
     $skipped = 0
 
-    # Ротация: файл стал короче сохранённой позиции — остаток лежит в .1
+    # Rotation: the file is shorter than the stored position - the remainder is in .1
     if ((Test-Path $auditFile) -and (Get-Item $auditFile).Length -lt $state.Position) {
         $rotated = "$auditFile.1"
         if (Test-Path $rotated) {
@@ -227,7 +228,7 @@ try {
     $lastHb = [datetime]::Parse($state.LastHeartbeat)
     if ((Get-Date) -gt $lastHb.AddMinutes($KSC.AuditHeartbeatMin)) {
         $hb = @(
-            'Аудит СУБД MariaDB: контроль работоспособности источника'
+            'MariaDB audit: source health check'
             "db_host=$($KSC.AuditDbHost)"
             "audit_file=$auditFile"
             "position=$($state.Position)"
@@ -240,12 +241,12 @@ try {
     }
 
     Save-ForwarderState -State $state
-    Write-Verbose "Передано записей: $sent, не распознано строк: $skipped, позиция: $($state.Position)."
+    Write-Verbose "Records forwarded: $sent, unparsed lines: $skipped, position: $($state.Position)."
 }
 catch {
     if ([Diagnostics.EventLog]::SourceExists($source)) {
         Write-EventLog -LogName $logName -Source $source -EventId 1101 -EntryType 'Error' `
-            -Message "Ошибка конвертера аудита СУБД: $($_.Exception.Message)"
+            -Message "Database audit forwarder error: $($_.Exception.Message)"
     }
     throw
 }
