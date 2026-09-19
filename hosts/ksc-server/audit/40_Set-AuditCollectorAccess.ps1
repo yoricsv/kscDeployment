@@ -86,7 +86,7 @@ if (-not $user) {
     $pwdSec = Read-Host "Set the password for account $account (used by MP 10 Collector)" -AsSecureString
     $user = New-LocalUser -Name $account -Password $pwdSec `
         -FullName 'MP 10 Collector: database audit log reader' `
-        -Description 'Service account for security event collection. Interactive logon denied.' `
+        -Description 'MP10 audit log reader; interactive logon denied' `
         -PasswordNeverExpires -UserMayNotChangePassword
     Write-KscLog "Local account $account created." 'OK'
 }
