@@ -24,19 +24,19 @@
     (удаление журнала с накопленными событиями выполняется только вручную).
 
 .EXAMPLE
-    .\26_Install-AuditForwarder.ps1
-    .\26_Install-AuditForwarder.ps1 -Rollback
+    .\20_Install-AuditForwarder.ps1
+    .\20_Install-AuditForwarder.ps1 -Rollback
 #>
 [CmdletBinding()]
 param([switch]$Rollback)
 
 $ErrorActionPreference = 'Stop'
-. "$PSScriptRoot\..\..\common\config.ps1"
+. "$PSScriptRoot\..\..\..\common\config.ps1"
 Assert-Elevated
 
 $taskName = 'KSC-DbAudit-Forwarder'
 $binRoot = 'C:\ProgramData\KscDeployment\bin'
-$workerRel = 'hosts\ksc-server\26_Publish-DbAuditToEventLog.ps1'
+$workerRel = 'hosts\ksc-server\audit\21_Publish-DbAuditToEventLog.ps1'
 $workerPath = Join-Path $binRoot $workerRel
 
 # ------------------------------------------------------------------ Откат
@@ -77,12 +77,12 @@ Write-KscLog "Размер журнала: $($KSC.AuditWinLogSizeMb) МБ, ре�
 
 # ------------------------------------------------------------------ 2. Рабочие файлы
 
-foreach ($dir in @($binRoot, (Join-Path $binRoot 'common'), (Join-Path $binRoot 'hosts\ksc-server'))) {
+foreach ($dir in @($binRoot, (Join-Path $binRoot 'common'), (Join-Path $binRoot 'hosts\ksc-server\audit'))) {
     if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
 }
 
-Copy-Item (Join-Path $PSScriptRoot '26_Publish-DbAuditToEventLog.ps1') $workerPath -Force
-Copy-Item "$PSScriptRoot\..\..\common\config.ps1" (Join-Path $binRoot 'common\config.ps1') -Force
+Copy-Item (Join-Path $PSScriptRoot '21_Publish-DbAuditToEventLog.ps1') $workerPath -Force
+Copy-Item "$PSScriptRoot\..\..\..\common\config.ps1" (Join-Path $binRoot 'common\config.ps1') -Force
 Write-KscLog "Рабочие файлы размещены: $binRoot" 'OK'
 
 # Изменять сценарий конвертера вправе только администраторы и система.
@@ -185,7 +185,7 @@ if ($events) {
     $events | ForEach-Object { Write-Host ('    {0}  id={1}  {2}' -f $_.TimeCreated, $_.Id, ($_.Message -split "`r?`n")[0]) -ForegroundColor Gray }
 }
 else {
-    Write-KscLog 'События пока не перенесены: проверьте, что аудит включён (25_Enable-DbAudit.ps1) и файл аудита пополняется.' 'WARN'
+    Write-KscLog 'События пока не перенесены: проверьте, что аудит включён (10_Enable-DbAudit.ps1) и файл аудита пополняется.' 'WARN'
 }
 
-Write-KscLog '=== Конвертер установлен. Следующий шаг: 27_Set-AuditCollectorAccess.ps1 ===' 'OK'
+Write-KscLog '=== Конвертер установлен. Следующий шаг: 40_Set-AuditCollectorAccess.ps1 ===' 'OK'

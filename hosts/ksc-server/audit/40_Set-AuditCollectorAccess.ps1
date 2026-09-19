@@ -28,14 +28,14 @@
     из групп доступа. Сама учётная запись не удаляется.
 
 .EXAMPLE
-    .\27_Set-AuditCollectorAccess.ps1
-    .\27_Set-AuditCollectorAccess.ps1 -Rollback
+    .\40_Set-AuditCollectorAccess.ps1
+    .\40_Set-AuditCollectorAccess.ps1 -Rollback
 #>
 [CmdletBinding()]
 param([switch]$Rollback)
 
 $ErrorActionPreference = 'Stop'
-. "$PSScriptRoot\..\..\common\config.ps1"
+. "$PSScriptRoot\..\..\..\common\config.ps1"
 Assert-Elevated
 
 $account = $KSC.AuditAccount
@@ -149,7 +149,7 @@ foreach ($deny in @('SeDenyInteractiveLogonRight', 'SeDenyRemoteInteractiveLogon
 # 0x1 — чтение, 0x2 — запись, 0x4 — очистка.
 $logKey = "HKLM:\SYSTEM\CurrentControlSet\Services\EventLog\$($KSC.AuditWinLogName)"
 if (-not (Test-Path $logKey)) {
-    throw "Журнал '$($KSC.AuditWinLogName)' не создан. Сначала выполните 26_Install-AuditForwarder.ps1."
+    throw "Журнал '$($KSC.AuditWinLogName)' не создан. Сначала выполните 20_Install-AuditForwarder.ps1."
 }
 $sddl = 'O:BAG:SYD:(A;;0xf0007;;;SY)(A;;0x7;;;BA)(A;;0x1;;;S-1-5-32-573)' + "(A;;0x1;;;$userSid)"
 Set-ItemProperty -Path $logKey -Name 'CustomSD' -Value $sddl
@@ -227,4 +227,4 @@ Write-Host "  Порты:                      TCP 135 + 49152-65535" -Foregroun
 Write-Host '=======================================================================' -ForegroundColor Cyan
 
 Write-KscLog 'Пароль учётной записи сохраните в парольном хранилище: он потребуется при добавлении учётной записи в MaxPatrol.' 'WARN'
-Write-KscLog '=== Доступ коллектора настроен. Следующий шаг: 28_Test-DbAudit.ps1 ===' 'OK'
+Write-KscLog '=== Доступ коллектора настроен. Следующий шаг: 90_Test-Audit.ps1 ===' 'OK'

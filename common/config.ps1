@@ -85,6 +85,14 @@ $Global:KSC = [ordered]@{
     SiemProtocol      = 'TCP'                   # TCP | UDP
     SiemFormat        = 'CEF'                   # CEF | LEEF
 
+    # --- Аудит ОС и прикладного ПО (Приказ ОАЦ № 130 + расширение для расследований) ---
+    # Приказ задаёт минимум; состав расширен событиями, без которых невозможно
+    # восстановить картину инцидента (процессы, PowerShell, доступ к файлам).
+    KscInstallDir         = 'C:\Program Files (x86)\Kaspersky Lab\Kaspersky Security Center'
+    AuditTranscriptDir    = 'C:\ProgramData\KscDeployment\pstranscripts'  # Транскрипты PowerShell
+    AuditSecurityLogSizeMb = 1024               # Журнал безопасности: локальный буфер
+    AuditChannelSizeMb    = 256                 # Прочие каналы (PowerShell, Kaspersky Event Log)
+
     # --- Аудит СУБД (Приказ ОАЦ № 130, п. 2 перечня событий) ---
     # Цепочка: плагин server_audit -> файл -> служба-конвертер -> журнал Windows
     # -> удалённое чтение коллектором MP 10. На Windows плагин умеет писать только

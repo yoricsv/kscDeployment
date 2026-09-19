@@ -8,7 +8,7 @@
     забирает MP 10 Collector.
 
     Устанавливается и регистрируется в планировщике скриптом
-    26_Install-AuditForwarder.ps1; самостоятельный запуск нужен только
+    20_Install-AuditForwarder.ps1; самостоятельный запуск нужен только
     для диагностики.
 
     Особенности:
@@ -33,7 +33,7 @@
     Остаток читается следующим запуском. По умолчанию 64 МБ.
 
 .EXAMPLE
-    .\26_Publish-DbAuditToEventLog.ps1 -Verbose
+    .\21_Publish-DbAuditToEventLog.ps1 -Verbose
 #>
 [CmdletBinding()]
 param(
@@ -42,7 +42,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-. "$PSScriptRoot\..\..\common\config.ps1"
+. "$PSScriptRoot\..\..\..\common\config.ps1"
 
 $auditFile = Join-Path $KSC.AuditLogDir $KSC.AuditFileName
 $logName = $KSC.AuditWinLogName
@@ -194,7 +194,7 @@ if (-not $mutex.WaitOne(0)) {
 
 try {
     if (-not [Diagnostics.EventLog]::SourceExists($source)) {
-        throw "Источник событий '$source' не зарегистрирован. Выполните 26_Install-AuditForwarder.ps1."
+        throw "Источник событий '$source' не зарегистрирован. Выполните 20_Install-AuditForwarder.ps1."
     }
 
     $state = Read-ForwarderState

@@ -8,7 +8,7 @@
       1. Проверяет наличие библиотеки плагина server_audit.dll в каталоге плагинов.
       2. Создаёт каталог файла аудита и назначает на него ограничительные права
          (SYSTEM, администраторы, учётная запись службы СУБД, группа аудиторов).
-      3. Подставляет блок параметров из 23_server_audit.ini.template в my.ini
+      3. Подставляет блок параметров из 11_server_audit.ini.template в my.ini
          между маркерами KSC-AUDIT BEGIN / KSC-AUDIT END (идемпотентно).
       4. Перезапускает службу СУБД и проверяет фактические значения переменных
          server_audit_* и наличие записей в файле аудита.
@@ -37,9 +37,9 @@
     после перезапуска службы). Файлы аудита не удаляются.
 
 .EXAMPLE
-    .\25_Enable-DbAudit.ps1
-    .\25_Enable-DbAudit.ps1 -IniPath 'C:\Program Files\MariaDB 10.5\data\my.ini'
-    .\25_Enable-DbAudit.ps1 -Rollback
+    .\10_Enable-DbAudit.ps1
+    .\10_Enable-DbAudit.ps1 -IniPath 'C:\Program Files\MariaDB 10.5\data\my.ini'
+    .\10_Enable-DbAudit.ps1 -Rollback
 #>
 [CmdletBinding()]
 param(
@@ -51,12 +51,12 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-. "$PSScriptRoot\..\..\common\config.ps1"
+. "$PSScriptRoot\..\..\..\common\config.ps1"
 Assert-Elevated
 
 # Маркеры только из символов ASCII: my.ini сохраняется в однобайтовой кодировке,
 # и кириллица в маркере нарушила бы повторный поиск блока.
-$markerBegin = '# >>> KSC-AUDIT BEGIN (managed by 25_Enable-DbAudit.ps1, do not edit manually)'
+$markerBegin = '# >>> KSC-AUDIT BEGIN (managed by 10_Enable-DbAudit.ps1, do not edit manually)'
 $markerEnd = '# <<< KSC-AUDIT END'
 
 # ------------------------------------------------------------------ Служба и пути
@@ -149,7 +149,7 @@ Write-KscLog "Права на $auditDir ограничены (наследова
 
 # ------------------------------------------------------------------ 3. Параметры в my.ini
 
-$templatePath = Join-Path $PSScriptRoot '23_server_audit.ini.template'
+$templatePath = Join-Path $PSScriptRoot '11_server_audit.ini.template'
 $block = (Get-Content $templatePath -Encoding UTF8 |
     Where-Object { $_ -notmatch '^\s*//' }) -join "`r`n"
 $block = $block.
@@ -235,4 +235,4 @@ else {
     Write-KscLog "Файл аудита $auditFile ещё не создан — проверьте права службы на каталог." 'WARN'
 }
 
-Write-KscLog '=== Аудит СУБД включён. Следующий шаг: 26_Install-AuditForwarder.ps1 ===' 'OK'
+Write-KscLog '=== Аудит СУБД включён. Следующий шаг: 20_Install-AuditForwarder.ps1 ===' 'OK'
