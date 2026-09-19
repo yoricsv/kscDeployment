@@ -197,6 +197,9 @@ try {
         $dbPassword = Read-Host "Password for new MariaDB account $account (store it in the MP 10 vault)" -AsSecureString
         $dbPlain = [Runtime.InteropServices.Marshal]::PtrToStringBSTR(
             [Runtime.InteropServices.Marshal]::SecureStringToBSTR($dbPassword))
+        if ([string]::IsNullOrEmpty($dbPlain)) {
+            throw "The password for new MariaDB account '$account' cannot be empty."
+        }
         $dbSql = ConvertTo-SqlLiteral $dbPlain
         $createSql = @"
 CREATE USER '$userSql'@'$hostSql' IDENTIFIED BY '$dbSql';
