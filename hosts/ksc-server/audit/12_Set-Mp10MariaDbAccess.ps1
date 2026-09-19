@@ -99,20 +99,9 @@ function ConvertTo-SqlLiteral {
 function New-TemporaryClientConfig {
     param([Parameter(Mandatory)][string]$Password)
 
-    $base = if ($env:USERPROFILE) { $env:USERPROFILE } else { [Environment]::GetFolderPath('UserProfile') }
-    $dir = Join-Path $base 'KscDeployment\db-verification'
-    if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
-    $path = Join-Path $dir ('mp10-root-{0}.ini' -f [guid]::NewGuid())
+    $path = Join-Path $PSScriptRoot ('.mp10-root-{0}.ini' -f [guid]::NewGuid())
     $content = "[client]`nuser=root`npassword=$Password`nport=$port`nhost=127.0.0.1"
     Set-Content -Path $path -Value $content -Encoding ASCII
-    $acl = Get-Acl -Path $path
-    $acl.SetAccessRuleProtection($true, $false)
-    $acl.Access | ForEach-Object { $acl.RemoveAccessRule($_) | Out-Null }
-    foreach ($identity in @($env:USERNAME, 'NT AUTHORITY\SYSTEM')) {
-        $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule(
-            $identity, 'Read', 'None', 'None', 'Allow')))
-    }
-    Set-Acl -Path $path -AclObject $acl
     $path
 }
 
