@@ -32,11 +32,15 @@
     Remove the "KSC Audit" firewall rules and take the account out of the
     access groups. The account itself is not deleted.
 
+.PARAMETER WhatIf
+    Show the planned account, rights, event log and firewall changes without
+    applying them or requesting a password.
+
 .EXAMPLE
     .\40_Set-AuditCollectorAccess.ps1
     .\40_Set-AuditCollectorAccess.ps1 -Rollback
 #>
-[CmdletBinding()]
+[CmdletBinding(SupportsShouldProcess)]
 param([switch]$Rollback)
 
 $ErrorActionPreference = 'Stop'
@@ -51,6 +55,16 @@ $fwGroup = 'KSC Audit'
 $groupSids = @{
     'S-1-5-32-573' = 'Event Log Readers'
     'S-1-5-32-562' = 'Distributed COM Users'
+}
+
+if ($WhatIfPreference) {
+    Write-KscLog "WhatIf: configure local account '$account' for MP 10 Collector access." 'OK'
+    Write-KscLog 'WhatIf: add the account to Event Log Readers and Distributed COM Users.' 'OK'
+    Write-KscLog 'WhatIf: grant required network and WMI rights, configure event log access, and create restricted RPC firewall rules.' 'OK'
+    if ($Rollback) {
+        Write-KscLog "WhatIf: remove '$fwGroup' firewall rules and group memberships; keep the account." 'OK'
+    }
+    return
 }
 
 # ------------------------------------------------------------------ Rollback

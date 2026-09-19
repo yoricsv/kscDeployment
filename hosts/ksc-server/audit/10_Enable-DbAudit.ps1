@@ -42,12 +42,16 @@
     Remove the audit parameter block from my.ini (the plugin stops loading
     after the service restart). Audit files are not deleted.
 
+.PARAMETER WhatIf
+    Show the changes without creating directories, changing ACLs, editing my.ini
+    or restarting MariaDB.
+
 .EXAMPLE
     .\10_Enable-DbAudit.ps1
     .\10_Enable-DbAudit.ps1 -IniPath 'C:\Program Files\MariaDB 10.5\data\my.ini'
     .\10_Enable-DbAudit.ps1 -Rollback
 #>
-[CmdletBinding()]
+[CmdletBinding(SupportsShouldProcess)]
 param(
     [string]$IniPath,
     [string]$ServiceName,
@@ -101,9 +105,11 @@ if ($Rollback) {
         Write-KscLog 'The audit parameter block is absent from my.ini - rollback is not required.' 'WARN'
         return
     }
-    Copy-Item $IniPath "$IniPath.bak-$(Get-Date -Format yyyyMMddHHmmss)"
     $pattern = '(?s)\r?\n?' + [regex]::Escape($markerBegin) + '.*?' + [regex]::Escape($markerEnd) + '\r?\n?'
-    Set-Content -Path $IniPath -Value ([regex]::Replace($text, $pattern, "`r`n")) -Encoding ASCII
+    if ($PSCmdlet.ShouldProcess($IniPath, 'Remove the MariaDB audit parameter block')) {
+        Copy-Item $IniPath "$IniPath.bak-$(Get-Date -Format yyyyMMddHHmmss)"
+        Set-Content -Path $IniPath -Value ([regex]::Replace($text, $pattern, "`r`n")) -Encoding ASCII
+    }
     Write-KscLog 'Audit parameter block removed from my.ini. Restart the service to apply.' 'OK'
     return
 }
@@ -120,38 +126,40 @@ Write-KscLog "Plugin library found: $pluginDll" 'OK'
 
 $auditDir = $KSC.AuditLogDir
 $auditFile = Join-Path $auditDir $KSC.AuditFileName
-if (-not (Test-Path $auditDir)) {
-    New-Item -ItemType Directory -Path $auditDir -Force | Out-Null
-    Write-KscLog "Audit directory created: $auditDir" 'OK'
-}
-
-# Audit file access: write - the database service and SYSTEM only, read - auditors.
-$acl = Get-Acl $auditDir
-$acl.SetAccessRuleProtection($true, $false)
-$acl.Access | ForEach-Object { $acl.RemoveAccessRule($_) | Out-Null }
-
-function Add-AuditDirRule {
-    param([string]$Identity, [string]$Rights)
-    try {
-        $rule = New-Object Security.AccessControl.FileSystemAccessRule(
-            $Identity, $Rights, 'ContainerInherit,ObjectInherit', 'None', 'Allow')
-        $acl.AddAccessRule($rule)
-        Write-KscLog "  audit directory permission: $Identity -> $Rights"
+if ($PSCmdlet.ShouldProcess($auditDir, 'Create the audit directory and restrict its permissions')) {
+    if (-not (Test-Path $auditDir)) {
+        New-Item -ItemType Directory -Path $auditDir -Force | Out-Null
+        Write-KscLog "Audit directory created: $auditDir" 'OK'
     }
-    catch {
-        Write-KscLog "  failed to grant permissions to '$Identity': $($_.Exception.Message)" 'WARN'
-    }
-}
 
-Add-AuditDirRule -Identity 'NT AUTHORITY\SYSTEM' -Rights 'FullControl'
-Add-AuditDirRule -Identity 'BUILTIN\Administrators' -Rights 'FullControl'
-if ($svcAccount -and $svcAccount -notmatch '^(LocalSystem|NT AUTHORITY\\SYSTEM)$') {
-    Add-AuditDirRule -Identity $svcAccount -Rights 'Modify'
+    # Audit file access: write - the database service and SYSTEM only, read - auditors.
+    $acl = Get-Acl $auditDir
+    $acl.SetAccessRuleProtection($true, $false)
+    $acl.Access | ForEach-Object { $acl.RemoveAccessRule($_) | Out-Null }
+
+    function Add-AuditDirRule {
+        param([string]$Identity, [string]$Rights)
+        try {
+            $rule = New-Object Security.AccessControl.FileSystemAccessRule(
+                $Identity, $Rights, 'ContainerInherit,ObjectInherit', 'None', 'Allow')
+            $acl.AddAccessRule($rule)
+            Write-KscLog "  audit directory permission: $Identity -> $Rights"
+        }
+        catch {
+            Write-KscLog "  failed to grant permissions to '$Identity': $($_.Exception.Message)" 'WARN'
+        }
+    }
+
+    Add-AuditDirRule -Identity 'NT AUTHORITY\SYSTEM' -Rights 'FullControl'
+    Add-AuditDirRule -Identity 'BUILTIN\Administrators' -Rights 'FullControl'
+    if ($svcAccount -and $svcAccount -notmatch '^(LocalSystem|NT AUTHORITY\\SYSTEM)$') {
+        Add-AuditDirRule -Identity $svcAccount -Rights 'Modify'
+    }
+    $auditorsGroup = "$($KSC.DomainNetBios)\$($KSC.AuditorsGroup)"
+    Add-AuditDirRule -Identity $auditorsGroup -Rights 'ReadAndExecute'
+    Set-Acl -Path $auditDir -AclObject $acl
+    Write-KscLog "Permissions on $auditDir restricted (inheritance disabled)." 'OK'
 }
-$auditorsGroup = "$($KSC.DomainNetBios)\$($KSC.AuditorsGroup)"
-Add-AuditDirRule -Identity $auditorsGroup -Rights 'ReadAndExecute'
-Set-Acl -Path $auditDir -AclObject $acl
-Write-KscLog "Permissions on $auditDir restricted (inheritance disabled)." 'OK'
 
 # ------------------------------------------------------------------ 3. Parameters in my.ini
 
@@ -168,19 +176,26 @@ $block = $block.
 $block = "$markerBegin`r`n$($block.Trim())`r`n$markerEnd"
 
 $ini = Get-Content $IniPath -Raw
-Copy-Item $IniPath "$IniPath.bak-$(Get-Date -Format yyyyMMddHHmmss)"
-
 if ($ini -match [regex]::Escape($markerBegin)) {
     $pattern = '(?s)' + [regex]::Escape($markerBegin) + '.*?' + [regex]::Escape($markerEnd)
     # Doubling '$' keeps the replacement text from being read as a group reference.
-    $ini = [regex]::Replace($ini, $pattern, $block.Replace('$', '$$'))
-    Write-KscLog 'Audit parameter block in my.ini updated.' 'OK'
+    $newIni = [regex]::Replace($ini, $pattern, $block.Replace('$', '$$'))
+    $changeDescription = 'Update the MariaDB audit parameter block'
 }
 else {
-    $ini = $ini.TrimEnd() + "`r`n`r`n" + $block + "`r`n"
-    Write-KscLog 'Audit parameter block added to my.ini.' 'OK'
+    $newIni = $ini.TrimEnd() + "`r`n`r`n" + $block + "`r`n"
+    $changeDescription = 'Add the MariaDB audit parameter block'
 }
-Set-Content -Path $IniPath -Value $ini -Encoding ASCII
+if ($PSCmdlet.ShouldProcess($IniPath, $changeDescription)) {
+    Copy-Item $IniPath "$IniPath.bak-$(Get-Date -Format yyyyMMddHHmmss)"
+    Set-Content -Path $IniPath -Value $newIni -Encoding ASCII
+    Write-KscLog "$changeDescription completed." 'OK'
+}
+
+if ($WhatIfPreference) {
+    Write-KscLog 'WhatIf complete: no MariaDB settings, ACLs or service state were changed.' 'OK'
+    return
+}
 
 # ------------------------------------------------------------------ 4. Restart and verification
 
@@ -190,7 +205,9 @@ if ($NoRestart) {
 }
 
 Write-KscLog 'Restarting the database service (KSC will be unavailable for the duration)...'
-Restart-Service $ServiceName -Force
+if ($PSCmdlet.ShouldProcess($ServiceName, 'Restart the MariaDB service')) {
+    Restart-Service $ServiceName -Force
+}
 (Get-Service $ServiceName).WaitForStatus('Running', '00:03:00')
 Write-KscLog 'Service started.' 'OK'
 

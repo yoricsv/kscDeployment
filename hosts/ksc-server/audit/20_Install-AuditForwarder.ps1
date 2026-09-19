@@ -25,11 +25,14 @@
     Remove the scheduled task and the working files. The event log is kept
     (deleting a log with collected events is a manual operation).
 
+.PARAMETER WhatIf
+    Show the changes without creating the event log, files, ACLs or scheduled task.
+
 .EXAMPLE
     .\20_Install-AuditForwarder.ps1
     .\20_Install-AuditForwarder.ps1 -Rollback
 #>
-[CmdletBinding()]
+[CmdletBinding(SupportsShouldProcess)]
 param([switch]$Rollback)
 
 $ErrorActionPreference = 'Stop'
@@ -45,11 +48,15 @@ $workerPath = Join-Path $binRoot $workerRel
 
 if ($Rollback) {
     if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
-        Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
+        if ($PSCmdlet.ShouldProcess($taskName, 'Remove the scheduled task')) {
+            Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
+        }
         Write-KscLog "Scheduled task '$taskName' removed." 'OK'
     }
     if (Test-Path $binRoot) {
-        Remove-Item $binRoot -Recurse -Force
+        if ($PSCmdlet.ShouldProcess($binRoot, 'Remove the forwarder working files')) {
+            Remove-Item $binRoot -Recurse -Force
+        }
         Write-KscLog "Working files removed: $binRoot" 'OK'
     }
     Write-KscLog "Event log '$($KSC.AuditWinLogName)' kept. To delete: Remove-EventLog -LogName '$($KSC.AuditWinLogName)'" 'WARN'
@@ -66,38 +73,48 @@ if ([Diagnostics.EventLog]::SourceExists($KSC.AuditWinLogSource)) {
     Write-KscLog "Event log '$($KSC.AuditWinLogName)' and source '$($KSC.AuditWinLogSource)' already exist." 'WARN'
 }
 else {
-    New-EventLog -LogName $KSC.AuditWinLogName -Source $KSC.AuditWinLogSource
+    if ($PSCmdlet.ShouldProcess($KSC.AuditWinLogName, 'Create the Windows event log')) {
+        New-EventLog -LogName $KSC.AuditWinLogName -Source $KSC.AuditWinLogSource
+    }
     Write-KscLog "Created event log '$($KSC.AuditWinLogName)' with source '$($KSC.AuditWinLogSource)'." 'OK'
 }
 
 # The log is a local delivery buffer for the SIEM: overwrite as needed is
 # acceptable, long-term retention is provided by the collector.
-Limit-EventLog -LogName $KSC.AuditWinLogName `
-    -MaximumSize ($KSC.AuditWinLogSizeMb * 1MB) `
-    -OverflowAction OverwriteAsNeeded
+if ($PSCmdlet.ShouldProcess($KSC.AuditWinLogName, 'Configure event log size and retention')) {
+    Limit-EventLog -LogName $KSC.AuditWinLogName `
+        -MaximumSize ($KSC.AuditWinLogSizeMb * 1MB) `
+        -OverflowAction OverwriteAsNeeded
+}
 Write-KscLog "Log size: $($KSC.AuditWinLogSizeMb) MB, mode: overwrite as needed." 'OK'
 
 # ------------------------------------------------------------------ 2. Working files
 
 foreach ($dir in @($binRoot, (Join-Path $binRoot 'common'), (Join-Path $binRoot 'hosts\ksc-server\audit'))) {
-    if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+    if ($PSCmdlet.ShouldProcess($dir, 'Create the forwarder directory')) {
+        if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+    }
 }
 
-Copy-Item (Join-Path $PSScriptRoot '21_Publish-DbAuditToEventLog.ps1') $workerPath -Force
-Copy-Item "$PSScriptRoot\..\..\..\common\config.ps1" (Join-Path $binRoot 'common\config.ps1') -Force
+if ($PSCmdlet.ShouldProcess($binRoot, 'Deploy the forwarder scripts')) {
+    Copy-Item (Join-Path $PSScriptRoot '21_Publish-DbAuditToEventLog.ps1') $workerPath -Force
+    Copy-Item "$PSScriptRoot\..\..\..\common\config.ps1" (Join-Path $binRoot 'common\config.ps1') -Force
+}
 Write-KscLog "Working files deployed: $binRoot" 'OK'
 
 # Only administrators and SYSTEM may modify the forwarder script.
-$acl = Get-Acl $binRoot
-$acl.SetAccessRuleProtection($true, $false)
-$acl.Access | ForEach-Object { $acl.RemoveAccessRule($_) | Out-Null }
-foreach ($id in @('NT AUTHORITY\SYSTEM', 'BUILTIN\Administrators')) {
+if ($PSCmdlet.ShouldProcess($binRoot, 'Restrict forwarder directory permissions')) {
+    $acl = Get-Acl $binRoot
+    $acl.SetAccessRuleProtection($true, $false)
+    $acl.Access | ForEach-Object { $acl.RemoveAccessRule($_) | Out-Null }
+    foreach ($id in @('NT AUTHORITY\SYSTEM', 'BUILTIN\Administrators')) {
+        $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule(
+            $id, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow')))
+    }
     $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule(
-        $id, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow')))
+        'BUILTIN\Users', 'ReadAndExecute', 'ContainerInherit,ObjectInherit', 'None', 'Allow')))
+    Set-Acl -Path $binRoot -AclObject $acl
 }
-$acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule(
-    'BUILTIN\Users', 'ReadAndExecute', 'ContainerInherit,ObjectInherit', 'None', 'Allow')))
-Set-Acl -Path $binRoot -AclObject $acl
 Write-KscLog 'Permissions on the forwarder directory restricted.' 'OK'
 
 # ------------------------------------------------------------------ 3. Scheduled task
@@ -171,10 +188,17 @@ $taskXml = @"
 </Task>
 "@
 
-Register-ScheduledTask -TaskName $taskName -Xml $taskXml -Force | Out-Null
+if ($PSCmdlet.ShouldProcess($taskName, 'Register the forwarder scheduled task')) {
+    Register-ScheduledTask -TaskName $taskName -Xml $taskXml -Force | Out-Null
+}
 Write-KscLog "Task '$taskName' registered: runs as SYSTEM every $($KSC.AuditForwardPeriodMin) min." 'OK'
 
 # ------------------------------------------------------------------ 4. First run
+
+if ($WhatIfPreference) {
+    Write-KscLog 'WhatIf complete: no event log, files, ACLs or scheduled task were changed.' 'OK'
+    return
+}
 
 Start-ScheduledTask -TaskName $taskName
 Start-Sleep -Seconds 10
