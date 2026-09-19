@@ -212,12 +212,23 @@ try {
         $dbSql = ConvertTo-SqlLiteral $dbPlain
         $createSql = @"
 CREATE USER '$userSql'@'$hostSql' IDENTIFIED BY '$dbSql';
+"@
+        $createSql = $createSql.Replace(
+            "CREATE USER '$userSql'@'$hostSql'",
+            "CREATE USER IF NOT EXISTS '$userSql'@'$hostSql'")
+        Invoke-MariaDbSql -Client $client -Config $tmpCnf -Sql $createSql | Out-Null
+        $verified = Invoke-MariaDbSql -Client $client -Config $tmpCnf `
+            -Sql "SELECT COUNT(*) FROM mysql.user WHERE User='$userSql' AND Host='$hostSql';"
+        if ([int]$verified[0] -ne 1) {
+            throw "MariaDB account '$account'@'$collector' was not created."
+        }
+        $grantSql = @"
 GRANT SELECT ON mysql.* TO '$userSql'@'$hostSql';
 GRANT SHOW DATABASES ON *.* TO '$userSql'@'$hostSql';
 GRANT SHOW VIEW ON *.* TO '$userSql'@'$hostSql';
 FLUSH PRIVILEGES;
 "@
-        Invoke-MariaDbSql -Client $client -Config $tmpCnf -Sql $createSql | Out-Null
+        Invoke-MariaDbSql -Client $client -Config $tmpCnf -Sql $grantSql | Out-Null
         Write-KscLog "MariaDB account '$account'@'$collector' created with read-only audit privileges." 'OK'
     }
     else {
