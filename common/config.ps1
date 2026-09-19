@@ -1,47 +1,47 @@
 ﻿<#
-    Единая точка конфигурации развёртывания Kaspersky Security Center.
-    Все скрипты репозитория подключают этот файл:  . "$PSScriptRoot\..\..\common\config.ps1"
+    Central configuration for the Kaspersky Security Center deployment.
+    All repository scripts load this file:  . "$PSScriptRoot\..\..\common\config.ps1"
 
-    ВНИМАНИЕ: перед первым запуском проверьте и при необходимости измените значения
-    в секции "Параметры площадки". Пароли здесь НЕ хранятся — они запрашиваются
-    интерактивно или читаются из защищённого хранилища (см. common/Get-KscSecret.ps1).
+    WARNING: before the first run, review and update values in the "Site parameters"
+    section when required. Passwords are NOT stored here; they are requested
+    interactively or read from protected storage (see common/Get-KscSecret.ps1).
 #>
 
-# ------------------------- Параметры площадки -------------------------
+# ------------------------- Site parameters -------------------------
 
 $Global:KSC = [ordered]@{
 
-    # --- Домен и сеть ---
-    DomainFqdn        = 'domain.local'          # FQDN домена AD  (ЗАМЕНИТЬ)
-    DomainNetBios     = 'DOM'                   # NetBIOS-имя домена (ЗАМЕНИТЬ)
-    Subnet            = '10.20.30.0/24'         # Единственный сегмент АС
+    # --- Domain and network ---
+    DomainFqdn        = 'domain.local'          # AD domain FQDN (REPLACE)
+    DomainNetBios     = 'DOM'                   # Domain NetBIOS name (REPLACE)
+    Subnet            = '10.20.30.0/24'         # Single administration segment
     SubnetMaskLength  = 24
-    Gateway           = '10.20.30.1'            # Шлюз (ЗАМЕНИТЬ при отличии)
+    Gateway           = '10.20.30.1'            # Gateway (REPLACE if different)
 
-    DomainController  = '10.20.30.10'           # Контроллер домена / DNS
-    HypervisorHost    = '10.20.30.11'           # Хост виртуализации
-    RdsHost           = '10.20.30.15'           # АРМ администратора (единственная точка управления)
+    DomainController  = '10.20.30.10'           # Domain controller / DNS
+    HypervisorHost    = '10.20.30.11'           # Virtualization host
+    RdsHost           = '10.20.30.15'           # Administrator workstation (single management point)
 
-    # --- Сервер администрирования KSC ---
-    KscHostName       = 'ksc'                   # Имя ОС (NetBIOS)
-    KscVmName         = 'ksc-soc'               # Имя ВМ в гипервизоре
-    KscIp             = '10.20.30.20'           # Статический адрес (ЗАМЕНИТЬ при отличии)
+    # --- KSC Administration Server ---
+    KscHostName       = 'ksc'                   # OS name (NetBIOS)
+    KscVmName         = 'ksc-soc'               # VM name in the hypervisor
+    KscIp             = '10.20.30.20'           # Static address (REPLACE if different)
 
-    # --- Порты ---
-    PortAgentSsl      = 13000                   # Агент -> Сервер (TCP/UDP)
-    PortAgentNoSsl    = 14000                   # Агент -> Сервер без SSL
-    PortServerToAgent = 15000                   # Сервер -> Агент (UDP)
-    PortMmc           = 13291                   # Консоль MMC
-    PortOpenApi       = 13299                   # OpenAPI / Web Console -> Сервер
+    # --- Ports ---
+    PortAgentSsl      = 13000                   # Agent -> Server (TCP/UDP)
+    PortAgentNoSsl    = 14000                   # Agent -> Server without SSL
+    PortServerToAgent = 15000                   # Server -> Agent (UDP)
+    PortMmc           = 13291                   # MMC console
+    PortOpenApi       = 13299                   # OpenAPI / Web Console -> Server
     PortWebConsole    = 8080                    # Web Console (HTTPS)
-    PortWebSrvHttp    = 8060                    # Веб-сервер KSC (автономные пакеты)
+    PortWebSrvHttp    = 8060                    # KSC web server (standalone packages)
     PortWebSrvHttps   = 8061
     PortMariaDb       = 3306
 
-    # --- Диски и каталоги ---
-    DiskSystem        = 'C:'                    # ОС + KSC
-    DiskDatabase      = 'D:'                    # Данные MariaDB
-    DiskData          = 'E:'                    # KLSHARE, обновления, резервные копии
+    # --- Disks and directories ---
+    DiskSystem        = 'C:'                    # OS + KSC
+    DiskDatabase      = 'D:'                    # MariaDB data
+    DiskData          = 'E:'                    # KLSHARE, updates, backups
 
     MariaDbDataDir    = 'D:\MariaDB\data'
     KlShareDir        = 'E:\KLSHARE'
@@ -49,85 +49,85 @@ $Global:KSC = [ordered]@{
     UpdatesDir        = 'E:\KSC-Updates'
     LogDir            = 'C:\ProgramData\KscDeployment\logs'
 
-    # --- СУБД ---
-    MariaDbVersion    = '10.11'                 # LTS-ветка (сверять с матрицей совместимости KSC)
+    # --- Database ---
+    MariaDbVersion    = '10.11'                 # LTS branch (check the KSC compatibility matrix)
     MariaDbInstallDir = 'C:\Program Files\MariaDB 10.11'
     DbName            = 'ksc'
     DbUser            = 'kscadmin'
     DbHost            = 'localhost'
-    InnoDbBufferPool  = '6G'                    # ~40% от 16 ГБ ОЗУ
+    InnoDbBufferPool  = '6G'                    # ~40% of 16 GB RAM
     InnoDbLogFileSize = '1G'
 
-    # --- Учётные записи ---
-    SvcAccount        = 'svc_ksc'               # Служба Сервера администрирования
-    DeployAccount     = 'svc_ksc_deploy'        # Удалённая установка агентов
-    AdminsGroup       = 'KSC-Admins'            # Роль "Главный администратор"
-    OperatorsGroup    = 'KSC-Operators'         # Роль "Оператор" (смежные СЗИ, мониторинг)
-    AuditorsGroup     = 'KSC-Auditors'          # Роль "Аудитор" (только чтение)
+    # --- Accounts ---
+    SvcAccount        = 'svc_ksc'               # Administration Server service
+    DeployAccount     = 'svc_ksc_deploy'        # Remote agent deployment
+    AdminsGroup       = 'KSC-Admins'            # "Main administrator" role
+    OperatorsGroup    = 'KSC-Operators'         # "Operator" role (security tools, monitoring)
+    AuditorsGroup     = 'KSC-Auditors'          # "Auditor" role (read-only)
 
-    # --- Ёмкость и хранение ---
-    PlannedHosts      = 1000                    # Проектный запас (фактически <= 254)
-    ActualHostsMax    = 254                     # Ёмкость сегмента /24
-    RetentionDays     = 365                     # Срок хранения событий и отчётов: 1 год
-    EventsLimit       = 20000000                # Лимит записей в хранилище событий
-    BackupKeepCopies  = 30                      # Глубина ротации резервных копий (дней)
+    # --- Capacity and retention ---
+    PlannedHosts      = 1000                    # Planning capacity (actual maximum <= 254)
+    ActualHostsMax    = 254                     # /24 segment capacity
+    RetentionDays     = 365                     # Event and report retention: 1 year
+    EventsLimit       = 20000000                # Event storage record limit
+    BackupKeepCopies  = 30                      # Backup rotation depth (days)
 
-    # --- Смежные СЗИ (доступ к хосту KSC для управления/мониторинга) ---
-    # Перечислите IP-адреса серверов смежных средств защиты информации.
+    # --- Security tools (access to the KSC host for management/monitoring) ---
+    # List the IP addresses of connected security tool servers.
     SecurityToolsHosts = @(
-        # '10.20.30.16',   # SIEM / коллектор событий
-        # '10.20.30.17'    # Система мониторинга
+        # '10.20.30.16',   # SIEM / event collector
+        # '10.20.30.17'    # Monitoring system
     )
 
-    # --- Экспорт событий в SIEM ---
-    SiemHost          = ''                      # IP коллектора (пусто = экспорт выключен)
+    # --- SIEM event export ---
+    SiemHost          = ''                      # Collector IP (empty = export disabled)
     SiemPort          = 514
     SiemProtocol      = 'TCP'                   # TCP | UDP
     SiemFormat        = 'CEF'                   # CEF | LEEF
 
-    # --- Аудит ОС и прикладного ПО (Приказ ОАЦ № 130 + расширение для расследований) ---
-    # Приказ задаёт минимум; состав расширен событиями, без которых невозможно
-    # восстановить картину инцидента (процессы, PowerShell, доступ к файлам).
+    # --- OS and application audit (OAC Order No. 130 + investigation extensions) ---
+    # The order defines the minimum; coverage is extended with events needed
+    # to reconstruct an incident (processes, PowerShell, file access).
     KscInstallDir         = 'C:\Program Files (x86)\Kaspersky Lab\Kaspersky Security Center'
-    AuditTranscriptDir    = 'C:\ProgramData\KscDeployment\pstranscripts'  # Транскрипты PowerShell
-    AuditSecurityLogSizeMb = 1024               # Журнал безопасности: локальный буфер
-    AuditChannelSizeMb    = 256                 # Прочие каналы (PowerShell, Kaspersky Event Log)
+    AuditTranscriptDir    = 'C:\ProgramData\KscDeployment\pstranscripts'  # PowerShell transcripts
+    AuditSecurityLogSizeMb = 1024               # Security log: local buffer
+    AuditChannelSizeMb    = 256                 # Other channels (PowerShell, Kaspersky Event Log)
 
-    # --- Аудит СУБД (Приказ ОАЦ № 130, п. 2 перечня событий) ---
-    # Цепочка: плагин server_audit -> файл -> служба-конвертер -> журнал Windows
-    # -> удалённое чтение коллектором MP 10. На Windows плагин умеет писать только
-    # в файл (MDEV-19851: значение SYSLOG на этой платформе не действует).
-    AuditDbHost         = '10.20.30.75'         # Узел СУБД (источник событий для MP 10)
-    AuditCollectorHost  = '10.20.30.73'         # MP 10 Collector: адрес, с которого разрешён сбор
-    AuditAccount        = 'kscaudit'            # Локальная УЗ Windows для чтения журнала коллектором
-    AuditLogDir         = 'D:\MariaDB\audit'    # Каталог файла аудита (вне каталога данных)
+    # --- Database audit (OAC Order No. 130, event list item 2) ---
+    # Pipeline: server_audit plugin -> file -> converter service -> Windows event log
+    # -> remote reading by the MP 10 Collector. On Windows, the plugin can write
+    # only to a file (MDEV-19851: SYSLOG is not supported on this platform).
+    AuditDbHost         = '10.20.30.75'         # Database host (MP 10 event source)
+    AuditCollectorHost  = '10.20.30.73'         # MP 10 Collector: allowed collection source
+    AuditAccount        = 'kscaudit'            # Local Windows account for collector log access
+    AuditLogDir         = 'D:\MariaDB\audit'    # Audit file directory (outside the data directory)
     AuditFileName       = 'server_audit.log'
-    AuditRotateSizeMb   = 100                   # Размер файла до ротации
-    AuditRotations      = 20                    # Глубина ротации (локальный буфер ~2 ГБ)
-    AuditQueryLogLimit  = 2048                  # Максимальная длина текста запроса в записи
+    AuditRotateSizeMb   = 100                   # File size before rotation
+    AuditRotations      = 20                    # Rotation depth (local buffer ~2 GB)
+    AuditQueryLogLimit  = 2048                  # Maximum query text length in a record
 
-    # Состав регистрируемых событий:
-    #   CONNECT — контроль сессий (в том числе неуспешные попытки), пишется для всех УЗ;
-    #   QUERY   — все команды (select/insert/update/delete/call/lock и прочие);
-    #   TABLE   — объекты, затронутые запросом.
+    # Audited event classes:
+    #   CONNECT - session monitoring, including failed attempts; logged for all accounts.
+    #   QUERY   - all statements (select/insert/update/delete/call/lock and others).
+    #   TABLE   - objects affected by the statement.
     AuditEvents         = 'CONNECT,QUERY,TABLE'
 
-    # Учётные записи, для которых не регистрируются QUERY/TABLE (CONNECT пишется всегда).
-    # Служебная УЗ Сервера администрирования выполняет непрерывный поток
-    # технических запросов; её полная регистрация исчисляется сотнями ГБ в сутки
-    # и выводит из строя цепочку доставки в SIEM. Пустое значение = строгий режим,
-    # регистрируются действия всех без исключения учётных записей.
+    # Accounts excluded from QUERY/TABLE logging (CONNECT is always logged).
+    # The Administration Server service account generates a continuous stream
+    # of technical queries; full logging can produce hundreds of GB per day
+    # and overload the SIEM delivery pipeline. Empty value = strict mode:
+    # actions of every account are logged without exception.
     AuditExclUsers      = 'kscadmin'
 
-    # Журнал Windows, в который переносятся записи аудита
+    # Windows event log receiving the audit records
     AuditWinLogName     = 'MariaDB-Audit'
     AuditWinLogSource   = 'MariaDB-ServerAudit'
-    AuditWinLogSizeMb   = 1024                  # Локальный буфер журнала (перезапись по мере заполнения)
-    AuditForwardPeriodMin = 1                   # Период запуска конвертера, минут
-    AuditHeartbeatMin   = 15                    # Период служебной записи "источник жив", минут
+    AuditWinLogSizeMb   = 1024                  # Local log buffer (overwrite when full)
+    AuditForwardPeriodMin = 1                   # Converter start interval, minutes
+    AuditHeartbeatMin   = 15                    # Heartbeat interval, minutes
 }
 
-# ------------------------- Служебные функции -------------------------
+# ------------------------- Helper functions -------------------------
 
 function Write-KscLog {
     param(
@@ -150,12 +150,12 @@ function Assert-Elevated {
     $id = [Security.Principal.WindowsIdentity]::GetCurrent()
     $principal = New-Object Security.Principal.WindowsPrincipal($id)
     if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-        throw 'Скрипт должен выполняться с правами администратора.'
+        throw 'The script must be run with administrator privileges.'
     }
 }
 
 function Get-KscManagementHosts {
-    <# Список адресов, которым разрешено управление хостом KSC. #>
+    <# List of addresses allowed to manage the KSC host. #>
     @($Global:KSC.RdsHost) + @($Global:KSC.SecurityToolsHosts) | Where-Object { $_ }
 }
 
