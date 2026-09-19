@@ -124,35 +124,45 @@ foreach ($s in $subcategories) {
 Write-KscLog "Subcategories configured: $applied of $($subcategories.Count)." $(if ($applied -eq $subcategories.Count) { 'OK' } else { 'WARN' })
 
 # Advanced audit policy takes precedence over the legacy category-based one
-New-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa' `
-    -Name 'SCENoApplyLegacyAuditPolicy' -Value 1 -PropertyType DWord -Force | Out-Null
+if ($PSCmdlet.ShouldProcess('HKLM:\SYSTEM\CurrentControlSet\Control\Lsa', 'Disable legacy audit policy')) {
+    New-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa' `
+        -Name 'SCENoApplyLegacyAuditPolicy' -Value 1 -PropertyType DWord -Force | Out-Null
+}
 
 # ------------------------------------------------------------------ 2. Event detail
 
 Write-KscLog '--- Event detail level ---'
 
 $auditPolicyKey = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\Audit'
-if (-not (Test-Path $auditPolicyKey)) { New-Item -Path $auditPolicyKey -Force | Out-Null }
-New-ItemProperty -Path $auditPolicyKey -Name 'ProcessCreationIncludeCmdLine_Enabled' -Value 1 -PropertyType DWord -Force | Out-Null
+if ($PSCmdlet.ShouldProcess($auditPolicyKey, 'Enable command line in process creation events')) {
+    if (-not (Test-Path $auditPolicyKey)) { New-Item -Path $auditPolicyKey -Force | Out-Null }
+    New-ItemProperty -Path $auditPolicyKey -Name 'ProcessCreationIncludeCmdLine_Enabled' -Value 1 -PropertyType DWord -Force | Out-Null
+}
 Write-KscLog '  + command line included in 4688 events' 'OK'
 
 # ------------------------------------------------------------------ 3. PowerShell logging
 
 Write-KscLog '--- PowerShell logging ---'
 
-$transcriptDir = $KSC.AuditTranscriptDir
-if (-not (Test-Path $transcriptDir)) { New-Item -ItemType Directory -Path $transcriptDir -Force | Out-Null }
-
-# Transcripts contain administrator command output: only administrators and
-# SYSTEM may read them, the collector account is granted read access separately.
-$acl = Get-Acl $transcriptDir
-$acl.SetAccessRuleProtection($true, $false)
-$acl.Access | ForEach-Object { [void]$acl.RemoveAccessRule($_) }
-foreach ($id in @('NT AUTHORITY\SYSTEM', 'BUILTIN\Administrators')) {
-    $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule(
-        $id, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow')))
+$transcriptDir = [string]$Global:KSC.AuditTranscriptDir
+if ([string]::IsNullOrWhiteSpace($transcriptDir)) {
+    throw 'AuditTranscriptDir is empty in common/config.ps1.'
 }
-if ($PSCmdlet.ShouldProcess($transcriptDir, 'Restrict permissions')) { Set-Acl -Path $transcriptDir -AclObject $acl }
+
+if ($PSCmdlet.ShouldProcess($transcriptDir, 'Create transcript directory and restrict permissions')) {
+    if (-not (Test-Path $transcriptDir)) { New-Item -ItemType Directory -Path $transcriptDir -Force | Out-Null }
+
+    # Transcripts contain administrator command output: only administrators and
+    # SYSTEM may read them, the collector account is granted read access separately.
+    $acl = Get-Acl -Path $transcriptDir
+    $acl.SetAccessRuleProtection($true, $false)
+    $acl.Access | ForEach-Object { [void]$acl.RemoveAccessRule($_) }
+    foreach ($id in @('NT AUTHORITY\SYSTEM', 'BUILTIN\Administrators')) {
+        $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule(
+            $id, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow')))
+    }
+    Set-Acl -Path $transcriptDir -AclObject $acl
+}
 
 $psPolicies = @(
     @{ Path = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\PowerShell\ScriptBlockLogging'; Name = 'EnableScriptBlockLogging'; Value = 1; Type = 'DWord' }
