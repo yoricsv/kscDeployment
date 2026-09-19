@@ -231,6 +231,17 @@ $verifyTempDir = Join-Path $Global:KSC.LogDir 'db-verification'
 if (-not (Test-Path $verifyTempDir)) {
     New-Item -ItemType Directory -Path $verifyTempDir -Force | Out-Null
 }
+$verifyAcl = Get-Acl -Path $verifyTempDir
+$verifyAcl.SetAccessRuleProtection($true, $false)
+$verifyAcl.Access | ForEach-Object { [void]$verifyAcl.RemoveAccessRule($_) }
+foreach ($identity in @(
+        'NT AUTHORITY\SYSTEM',
+        'BUILTIN\Administrators',
+        [Security.Principal.WindowsIdentity]::GetCurrent().Name)) {
+    $verifyAcl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule(
+        $identity, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow')))
+}
+Set-Acl -Path $verifyTempDir -AclObject $verifyAcl
 $tmpCnf = Join-Path $verifyTempDir ('ksc-audit-{0}.ini' -f ([guid]::NewGuid()))
 try {
     $rootPlain = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
