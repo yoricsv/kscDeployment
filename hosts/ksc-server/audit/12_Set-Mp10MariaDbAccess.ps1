@@ -128,9 +128,18 @@ function Invoke-MariaDbSql {
         [Parameter(Mandatory)][string]$Config,
         [Parameter(Mandatory)][string]$Sql
     )
-    $output = $Sql | & $Client "--defaults-file=$Config" --batch --skip-column-names 2>&1
-    if ($LASTEXITCODE -ne 0) { throw "MariaDB command failed: $($output -join ' ')" }
-    @($output)
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        $output = @($Sql | & $Client "--defaults-file=$Config" --batch --skip-column-names 2>&1)
+        $exitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+    $outputText = @($output | ForEach-Object { $_.ToString() })
+    if ($exitCode -ne 0) { throw "MariaDB command failed (exit code $exitCode): $($outputText -join ' ')" }
+    $outputText
 }
 
 function Update-ManagedRemoteBlock {
