@@ -203,8 +203,23 @@ $logs = [ordered]@{
 foreach ($name in $logs.Keys) {
     $sizeBytes = $logs[$name] * 1MB
     if (-not $PSCmdlet.ShouldProcess("Log $name", "Enable, size $($logs[$name]) MB")) { continue }
-    $out = & wevtutil.exe sl "$name" /e:true /ms:$sizeBytes /rt:false 2>&1
-    if ($LASTEXITCODE -eq 0) { Write-KscLog ('  + {0}: {1} MB' -f $name, $logs[$name]) }
+    # Security is a protected channel and is commonly controlled by domain
+    # policy. It is already enabled on a normal Windows installation, so do
+    # not try to change its enable/retention switches here.
+    $wevtutilArgs = @('sl', $name, "/ms:$sizeBytes")
+    if ($name -ne 'Security') {
+        $wevtutilArgs += '/e:true', '/rt:false'
+    }
+    $previousErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $out = & wevtutil.exe @wevtutilArgs 2>&1
+        $exitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+    if ($exitCode -eq 0) { Write-KscLog ('  + {0}: {1} MB' -f $name, $logs[$name]) }
     else { Write-KscLog "  ! channel '$name' is not available: $out" 'WARN' }
 }
 
