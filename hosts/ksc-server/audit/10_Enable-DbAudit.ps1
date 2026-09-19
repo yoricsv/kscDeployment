@@ -169,8 +169,9 @@ if ($PSCmdlet.ShouldProcess($auditDir, 'Create the audit directory and restrict 
 $templatePath = Join-Path $PSScriptRoot '11_server_audit.ini.template'
 $block = (Get-Content $templatePath -Encoding UTF8 |
     Where-Object { $_ -notmatch '^\s*//' }) -join "`r`n"
+$auditFileForMariaDb = $auditFile -replace '\\', '/'
 $block = $block.
-    Replace('{{AUDIT_FILE}}', $auditFile).
+    Replace('{{AUDIT_FILE}}', $auditFileForMariaDb).
     Replace('{{ROTATE_SIZE}}', ($KSC.AuditRotateSizeMb * 1MB)).
     Replace('{{ROTATIONS}}', $KSC.AuditRotations).
     Replace('{{EVENTS}}', $KSC.AuditEvents).
@@ -251,6 +252,11 @@ try {
     catch {
         Write-KscLog "Audit settings were applied, but verification was skipped because the temporary credential file could not be protected: $($_.Exception.Message)" 'WARN'
         return
+    }
+
+    $enableLogging = & $mysqlExe "--defaults-file=$tmpCnf" -N -B -e 'SET GLOBAL server_audit_logging=ON' 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "MariaDB server_audit plugin is not available or cannot be enabled: $enableLogging"
     }
 
     $vars = & $mysqlExe "--defaults-file=$tmpCnf" -N -B -e "SHOW GLOBAL VARIABLES LIKE 'server_audit%'" 2>&1
