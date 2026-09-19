@@ -43,10 +43,10 @@ $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\..\..\..\common\config.ps1"
 Assert-Elevated
 
-$account = $KSC.AuditMariaDbUser
-$collector = $KSC.AuditCollectorHost
-$bindAddress = $KSC.AuditMariaDbBindAddress
-$port = [int]$KSC.PortMariaDb
+$account = if ($KSC.AuditMariaDbUser) { $KSC.AuditMariaDbUser } else { 'mp10audit' }
+$collector = if ($KSC.AuditCollectorHost) { $KSC.AuditCollectorHost } else { '10.20.30.73' }
+$bindAddress = if ($KSC.AuditMariaDbBindAddress) { $KSC.AuditMariaDbBindAddress } else { '10.20.30.75' }
+$port = if ($KSC.PortMariaDb) { [int]$KSC.PortMariaDb } else { 3306 }
 $firewallGroup = 'KSC Audit - MariaDB'
 $managedBegin = '# >>> KSC-MP10-MARIADB BEGIN (managed by 12_Set-Mp10MariaDbAccess.ps1)'
 $managedEnd = '# <<< KSC-MP10-MARIADB END'
@@ -68,7 +68,7 @@ function Get-MariaDbService {
 function Get-DefaultsFileFromPathName {
     param([string]$PathName)
 
-    if ($PathName -match '(?i)--defaults-file=(?:"([^"]+)"|(\S+))') {
+    if ($PathName -match '(?i)--defaults-file=(?:"([^"]+)"|(.+?\.ini)(?:\s|$))') {
         if ($Matches[1]) { return $Matches[1] }
         return $Matches[2]
     }
