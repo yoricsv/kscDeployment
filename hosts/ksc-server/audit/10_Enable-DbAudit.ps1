@@ -227,7 +227,11 @@ if (-not (Test-Path $mysqlExe)) {
 }
 
 $rootPwdSec = Read-Host 'Database root password (for settings verification)' -AsSecureString
-$tmpCnf = Join-Path $env:TEMP ('ksc-audit-{0}.ini' -f ([guid]::NewGuid()))
+$verifyTempDir = Join-Path $Global:KSC.LogDir 'db-verification'
+if (-not (Test-Path $verifyTempDir)) {
+    New-Item -ItemType Directory -Path $verifyTempDir -Force | Out-Null
+}
+$tmpCnf = Join-Path $verifyTempDir ('ksc-audit-{0}.ini' -f ([guid]::NewGuid()))
 try {
     $rootPlain = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
         [Runtime.InteropServices.Marshal]::SecureStringToBSTR($rootPwdSec))
