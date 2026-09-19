@@ -96,6 +96,9 @@ if (-not $IniPath -or -not (Test-Path $IniPath)) {
     throw 'my.ini not found. Specify the path with -IniPath.'
 }
 Write-KscLog "Configuration file: $IniPath"
+if ($defaultsFile -and ((Resolve-Path $IniPath).Path -ne (Resolve-Path $defaultsFile).Path)) {
+    Write-KscLog "Warning: the service command line points to '$defaultsFile', but this script edits '$IniPath'." 'WARN'
+}
 
 # ------------------------------------------------------------------ Rollback
 
@@ -229,14 +232,22 @@ try {
     $rootPlain = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
         [Runtime.InteropServices.Marshal]::SecureStringToBSTR($rootPwdSec))
     Set-Content -Path $tmpCnf -Value "[client]`nuser=root`npassword=$rootPlain`nport=$($KSC.PortMariaDb)`nhost=127.0.0.1" -Encoding ASCII
-    icacls $tmpCnf /inheritance:r /grant:r "$env:USERNAME:(R)" 'SYSTEM:(R)' | Out-Null
+    icacls.exe $tmpCnf /inheritance:r /grant:r "$($env:USERNAME):R" 'SYSTEM:R' | Out-Null
 
     $vars = & $mysqlExe "--defaults-file=$tmpCnf" -N -B -e "SHOW GLOBAL VARIABLES LIKE 'server_audit%'" 2>&1
     if ($LASTEXITCODE -ne 0) { throw "Database connection error: $vars" }
     $vars | Out-String | Write-Host
 
-    $logging = ($vars | Where-Object { $_ -match '^server_audit_logging' }) -replace '.*\s'
-    if ($logging -ne 'ON') { throw 'server_audit_logging is not ON - auditing is disabled.' }
+    $loggingLine = @($vars | Where-Object { $_ -match '^\s*server_audit_logging\s+' }) | Select-Object -First 1
+    $logging = if ($loggingLine -match '\s(?<value>ON|OFF)\s*$') { $Matches['value'].ToUpperInvariant() } else { $null }
+    $outputLine = @($vars | Where-Object { $_ -match '^\s*server_audit_output_type\s+' }) | Select-Object -First 1
+    $outputType = if ($outputLine -match '\s(?<value>\S+)\s*$') { $Matches['value'].ToLowerInvariant() } else { $null }
+    $rotateLine = @($vars | Where-Object { $_ -match '^\s*server_audit_file_rotate_size\s+' }) | Select-Object -First 1
+    $rotateSize = if ($rotateLine -match '\s(?<value>\d+)\s*$') { [int64]$Matches['value'] } else { 0 }
+    if ($logging -ne 'ON' -or $outputType -ne 'file' -or $rotateSize -le 0) {
+        $effective = ($vars | Out-String).Trim()
+        throw "MariaDB did not apply the audit settings from '$IniPath'. Effective server_audit values:`n$effective`nService command line: $($svcCim.PathName)"
+    }
 
     # Read-only probe query that produces an audit record
     & $mysqlExe "--defaults-file=$tmpCnf" -e 'SELECT 1 FROM information_schema.tables LIMIT 1' | Out-Null
