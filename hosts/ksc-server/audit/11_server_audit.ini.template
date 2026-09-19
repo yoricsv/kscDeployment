@@ -1,0 +1,33 @@
+// MariaDB audit configuration block (server_audit plugin).
+// Inserted into my.ini by 10_Enable-DbAudit.ps1 between the
+// KSC-AUDIT BEGIN / KSC-AUDIT END markers; lines starting with "//" are not copied.
+//
+// Placement: a separate [mysqld] group is allowed - group options are merged.
+// On Windows the plugin supports file output only (server_audit_output_type=file).
+
+[mysqld]
+# Load the plugin at service start
+plugin_load_add=server_audit
+
+# FORCE_PLUS_PERMANENT: the server does not start without the plugin and the
+# plugin cannot be removed with UNINSTALL PLUGIN - event logging cannot be
+# turned off on a running server.
+server_audit=FORCE_PLUS_PERMANENT
+
+server_audit_logging=ON
+server_audit_output_type=file
+server_audit_file_path={{AUDIT_FILE}}
+server_audit_file_rotate_size={{ROTATE_SIZE}}
+server_audit_file_rotations={{ROTATIONS}}
+
+# Event set: session control + statements + affected objects
+server_audit_events={{EVENTS}}
+
+# Accounts excluded from QUERY/TABLE logging.
+# CONNECT (logon, logoff, failed authentication) is logged for every account
+# regardless of this setting.
+server_audit_excl_users={{EXCL_USERS}}
+
+# Statement text length limit in a record: protects the Windows event log
+# from records exceeding the maximum event message size.
+server_audit_query_log_limit={{QUERY_LOG_LIMIT}}

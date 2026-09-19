@@ -32,6 +32,8 @@ common/                     единый источник параметров �
 
 hosts/
   ksc-server/               Сервер администрирования: подготовка → приёмка
+    audit/                  аудит ОС, СУБД и ПО KSC, передача событий в MaxPatrol 10
+    hardening/              усиление защищённости узла
   dc-gpo/                   объекты службы каталогов, политика установки Агента, контроль охвата
   rds-mgmt/                 АРМ администратора
   win-endpoint/             узлы Windows
@@ -88,6 +90,18 @@ cd hosts\ksc-server
 .\50_Backup-KscServer.ps1 -Register -Time 01:30
 .\hardening\Invoke-Hardening.ps1
 .\60_Test-Deployment.ps1
+```
+
+Аудит и передача событий в MaxPatrol 10 (подробно — `hosts/ksc-server/audit/README.md`):
+
+```powershell
+cd audit
+.\00_Set-OsAudit.ps1
+.\10_Enable-DbAudit.ps1
+.\20_Install-AuditForwarder.ps1
+.\30_Set-KscAppAudit.ps1
+.\40_Set-AuditCollectorAccess.ps1
+.\90_Test-Audit.ps1
 ```
 
 ### 3. Подготовить домен и развернуть Агенты
