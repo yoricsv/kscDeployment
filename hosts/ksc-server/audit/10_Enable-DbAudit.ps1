@@ -259,7 +259,30 @@ try {
 }
 finally {
     if (Test-Path $tmpCnf) {
-        Set-Content -Path $tmpCnf -Value ('0' * 4096) -Encoding ASCII -ErrorAction SilentlyContinue
+        try {
+            $length = (Get-Item $tmpCnf).Length
+            $stream = [IO.File]::Open(
+                $tmpCnf,
+                [IO.FileMode]::Open,
+                [IO.FileAccess]::Write,
+                [IO.FileShare]::None)
+            try {
+                $zeroes = New-Object byte[] 4096
+                $remaining = $length
+                while ($remaining -gt 0) {
+                    $count = [Math]::Min($remaining, $zeroes.Length)
+                    $stream.Write($zeroes, 0, $count)
+                    $remaining -= $count
+                }
+                $stream.Flush($true)
+            }
+            finally {
+                $stream.Dispose()
+            }
+        }
+        catch {
+            Write-KscLog "Could not overwrite the temporary credential file before deletion: $($_.Exception.Message)" 'WARN'
+        }
         Remove-Item $tmpCnf -Force -ErrorAction SilentlyContinue
     }
     Remove-Variable rootPlain -ErrorAction SilentlyContinue
