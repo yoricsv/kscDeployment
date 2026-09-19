@@ -227,17 +227,31 @@ if (-not (Test-Path $mysqlExe)) {
 }
 
 $rootPwdSec = Read-Host 'Database root password (for settings verification)' -AsSecureString
-$verifyBaseDir = if ($env:USERPROFILE) { $env:USERPROFILE } else { [Environment]::GetFolderPath('UserProfile') }
-$verifyTempDir = Join-Path $verifyBaseDir 'KscDeployment\db-verification'
-if (-not (Test-Path $verifyTempDir)) {
-    New-Item -ItemType Directory -Path $verifyTempDir -Force | Out-Null
+$tmpCnf = $null
+try {
+    $verifyBaseDir = if ($env:USERPROFILE) { $env:USERPROFILE } else { [Environment]::GetFolderPath('UserProfile') }
+    $verifyTempDir = Join-Path $verifyBaseDir 'KscDeployment\db-verification'
+    if (-not (Test-Path $verifyTempDir)) {
+        New-Item -ItemType Directory -Path $verifyTempDir -Force | Out-Null
+    }
+    $tmpCnf = Join-Path $verifyTempDir ('ksc-audit-{0}.ini' -f ([guid]::NewGuid()))
 }
-$tmpCnf = Join-Path $verifyTempDir ('ksc-audit-{0}.ini' -f ([guid]::NewGuid()))
+catch {
+    Write-KscLog "Audit settings were applied, but verification was skipped because a temporary credential file could not be created: $($_.Exception.Message)" 'WARN'
+    return
+}
 try {
     $rootPlain = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
         [Runtime.InteropServices.Marshal]::SecureStringToBSTR($rootPwdSec))
-    Set-Content -Path $tmpCnf -Value "[client]`nuser=root`npassword=$rootPlain`nport=$($KSC.PortMariaDb)`nhost=127.0.0.1" -Encoding ASCII
-    icacls.exe $tmpCnf /inheritance:r /grant:r "$($env:USERNAME):R" 'SYSTEM:R' | Out-Null
+    try {
+        Set-Content -Path $tmpCnf -Value "[client]`nuser=root`npassword=$rootPlain`nport=$($KSC.PortMariaDb)`nhost=127.0.0.1" -Encoding ASCII
+        icacls.exe $tmpCnf /inheritance:r /grant:r "$($env:USERNAME):R" 'SYSTEM:R' | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "icacls failed with exit code $LASTEXITCODE." }
+    }
+    catch {
+        Write-KscLog "Audit settings were applied, but verification was skipped because the temporary credential file could not be protected: $($_.Exception.Message)" 'WARN'
+        return
+    }
 
     $vars = & $mysqlExe "--defaults-file=$tmpCnf" -N -B -e "SHOW GLOBAL VARIABLES LIKE 'server_audit%'" 2>&1
     if ($LASTEXITCODE -ne 0) { throw "Database connection error: $vars" }
